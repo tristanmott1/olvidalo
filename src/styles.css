@@ -1,23 +1,24 @@
 :root {
-  color: #18211f;
-  background: #f5f7f6;
+  color: #17211c;
+  background: #eef4ee;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
   line-height: 1.5;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  --ink: #18211f;
-  --muted: #65736f;
-  --line: #dce5e0;
-  --surface: #ffffff;
-  --soft: #edf4f1;
-  --brand: #16463f;
-  --brand-bright: #1f6d61;
-  --fair: #258e58;
-  --out: #c93932;
-  --gold: #d99b2d;
-  --shadow: 0 18px 48px rgba(22, 70, 63, 0.1);
+  --ink: #17211c;
+  --muted: #647267;
+  --line: #dce5da;
+  --surface: #fffdf7;
+  --soft: #edf4ec;
+  --brand: #123f38;
+  --brand-bright: #1f7564;
+  --fair: #258f5d;
+  --out: #c64235;
+  --ball: #f2bd3d;
+  --gold: #d4a139;
+  --shadow: 0 18px 48px rgba(18, 63, 56, 0.12);
 }
 
 * {
@@ -32,6 +33,7 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  background: linear-gradient(180deg, #eaf2eb 0%, #f8faf4 52%, #eef4ee 100%);
 }
 
 button,
@@ -57,7 +59,7 @@ select {
   min-height: 46px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--surface);
   color: var(--ink);
   padding: 0 12px;
   outline: none;
@@ -98,11 +100,12 @@ button:focus-visible {
 .brand-mark {
   width: 42px;
   height: 42px;
-  border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(22, 70, 63, 0.18);
+  border-radius: 10px;
+  box-shadow: 0 10px 24px rgba(18, 63, 56, 0.22);
 }
 
 .brand strong {
+  color: var(--brand);
   font-size: 1.2rem;
   line-height: 1;
 }
@@ -118,7 +121,7 @@ button:focus-visible {
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--surface);
+  background: linear-gradient(180deg, var(--surface), #fbfff9);
   box-shadow: var(--shadow);
 }
 
@@ -196,7 +199,7 @@ button:focus-visible {
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fbfdfc;
+  background: #fbfef9;
 }
 
 .player-row.dragging {
@@ -242,13 +245,14 @@ button:focus-visible {
 }
 
 .primary {
-  background: var(--brand);
+  background: linear-gradient(180deg, var(--brand-bright), var(--brand));
   color: #ffffff;
   padding: 0 16px;
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.14);
 }
 
 .secondary {
-  background: var(--soft);
+  background: #f5faf4;
   color: var(--brand);
   padding: 0 14px;
 }
@@ -269,7 +273,7 @@ button:focus-visible {
   padding: 5px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--soft);
+  background: #eef5ed;
 }
 
 .segmented-control button {
@@ -282,10 +286,48 @@ button:focus-visible {
 .segmented-control button.selected {
   background: var(--brand);
   color: #ffffff;
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.12);
 }
 
 .play-panel {
   gap: 16px;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.play-panel::before,
+.play-panel::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* The play panel gets a faint swing path without adding extra markup. */
+.play-panel::before {
+  width: 360px;
+  height: 360px;
+  top: 72px;
+  left: -176px;
+  border: 1px solid rgba(18, 63, 56, 0.08);
+  border-radius: 999px;
+  transform: rotate(-18deg);
+}
+
+.play-panel::after {
+  width: 18px;
+  height: 18px;
+  top: 98px;
+  right: 22px;
+  border-radius: 999px;
+  background: var(--ball);
+  box-shadow: 0 0 0 6px rgba(242, 189, 61, 0.12);
+}
+
+.play-panel > * {
+  position: relative;
+  z-index: 1;
 }
 
 .status-row {
@@ -300,7 +342,7 @@ button:focus-visible {
   min-height: 30px;
   padding: 0 10px;
   border-radius: 999px;
-  background: var(--soft);
+  background: #eef5ed;
   color: var(--brand);
   font-size: 0.78rem;
   font-weight: 850;
@@ -311,16 +353,21 @@ button:focus-visible {
   place-items: center;
   min-height: 116px;
   border-radius: 8px;
-  background: #102b28;
+  background:
+    linear-gradient(135deg, rgba(242, 189, 61, 0.12), transparent 38%),
+    linear-gradient(180deg, #0f332e, #0b2723);
   color: #ffffff;
   font-size: 4rem;
   font-variant-numeric: tabular-nums;
   font-weight: 900;
   line-height: 1;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 248, 232, 0.12),
+    inset 0 -6px 0 rgba(0, 0, 0, 0.13);
 }
 
 .timer.done {
-  background: var(--brand);
+  background: linear-gradient(180deg, var(--brand-bright), var(--brand));
 }
 
 .hit-buttons {
@@ -335,14 +382,15 @@ button:focus-visible {
   color: #ffffff;
   font-size: 1.28rem;
   font-weight: 950;
+  box-shadow: inset 0 -4px 0 rgba(0, 0, 0, 0.14);
 }
 
 .fair-hit {
-  background: var(--fair);
+  background: linear-gradient(180deg, #2da66c, var(--fair));
 }
 
 .out-hit {
-  background: var(--out);
+  background: linear-gradient(180deg, #d84d3f, var(--out));
 }
 
 .control-button {
@@ -366,12 +414,12 @@ button:focus-visible {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fbfdfc;
+  background: #fbfef9;
 }
 
 .leader-row.leader {
-  border-color: rgba(217, 155, 45, 0.46);
-  background: #fff9eb;
+  border-color: rgba(212, 161, 57, 0.5);
+  background: #fff7df;
 }
 
 .rank,
@@ -381,9 +429,15 @@ button:focus-visible {
   width: 32px;
   height: 32px;
   border-radius: 999px;
-  background: var(--soft);
-  color: var(--brand);
+  background: #fff0bd;
+  color: #4b3508;
   font-weight: 850;
+  box-shadow: inset 0 -2px 0 rgba(75, 53, 8, 0.08);
+}
+
+.leader-row.leader .rank {
+  background: var(--gold);
+  color: #2b1d04;
 }
 
 .leader-row div {

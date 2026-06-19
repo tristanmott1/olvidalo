@@ -1,13 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
   <title id="title">Olvídalo app icon</title>
-  <desc id="desc">A round scorekeeper mark with fair and out colors.</desc>
-  <rect width="512" height="512" rx="112" fill="#16463f"/>
-  <circle cx="256" cy="256" r="172" fill="#f7f9f7"/>
-  <path d="M256 84a172 172 0 0 1 149 86l-149 86Z" fill="#28a36a"/>
-  <path d="M405 170a172 172 0 0 1 0 172l-149-86Z" fill="#d94b3d"/>
-  <path d="M405 342a172 172 0 0 1-149 86V256Z" fill="#f2b84b"/>
-  <path d="M256 428a172 172 0 0 1-149-86l149-86Z" fill="#2477a3"/>
-  <path d="M107 342a172 172 0 0 1 0-172l149 86Z" fill="#1f6d61"/>
-  <circle cx="256" cy="256" r="74" fill="#16463f"/>
-  <text x="256" y="282" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="78" font-weight="800" fill="#ffffff">O</text>
+  <desc id="desc">A minimal swingset, swing, ball, and ball arc for Olvídalo.</desc>
+  <rect width="512" height="512" rx="108" fill="#123f38"/>
+  <path d="M139 386 206 118h101l66 268" fill="none" stroke="#fff8e8" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M232 126v150M284 126v150" fill="none" stroke="#fff8e8" stroke-width="10" stroke-linecap="round"/>
+  <rect x="213" y="272" width="90" height="18" rx="9" fill="#fff8e8"/>
+  <path d="M212 342c38-83 91-141 159-174" fill="none" stroke="#f2bd3d" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="385" cy="158" r="37" fill="#f2bd3d"/>
 </svg>
