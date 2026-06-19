@@ -41,6 +41,8 @@ type Phase = "setup" | "playing" | "complete";
 
 const PLAYERS_KEY = "olvidalo.players.v1";
 const DEFAULT_OUT_LIMIT = 2;
+const OUT_LIMIT_OPTIONS = [1, 2, 3, 4, 5] as const;
+const MAX_OUT_LIMIT = 5;
 
 function createId() {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -53,7 +55,7 @@ function clampOutLimit(value: number) {
     return DEFAULT_OUT_LIMIT;
   }
 
-  return Math.min(9, Math.max(1, Math.round(value)));
+  return Math.min(MAX_OUT_LIMIT, Math.max(1, Math.round(value)));
 }
 
 function readStoredPlayers(): Player[] {
@@ -330,14 +332,16 @@ function App() {
 
               <label className="field limit-field">
                 <span>Outs</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={9}
-                  inputMode="numeric"
+                <select
                   value={draftOutLimit}
                   onChange={(event) => setDraftOutLimit(clampOutLimit(Number(event.target.value)))}
-                />
+                >
+                  {OUT_LIMIT_OPTIONS.map((outLimit) => (
+                    <option key={outLimit} value={outLimit}>
+                      {outLimit}
+                    </option>
+                  ))}
+                </select>
               </label>
 
               <button className="secondary add-button" type="submit" disabled={!draftName.trim()}>
@@ -364,16 +368,18 @@ function App() {
 
                   <label className="field inline-limit">
                     <span>Outs</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={9}
-                      inputMode="numeric"
+                    <select
                       value={player.outLimit}
                       onChange={(event) =>
                         updatePlayer(player.id, { outLimit: clampOutLimit(Number(event.target.value)) })
                       }
-                    />
+                    >
+                      {OUT_LIMIT_OPTIONS.map((outLimit) => (
+                        <option key={outLimit} value={outLimit}>
+                          {outLimit}
+                        </option>
+                      ))}
+                    </select>
                   </label>
 
                   <button

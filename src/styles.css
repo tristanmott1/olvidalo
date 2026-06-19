@@ -35,7 +35,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -49,7 +50,8 @@ button:disabled {
   opacity: 0.48;
 }
 
-input {
+input,
+select {
   width: 100%;
   min-width: 0;
   border: 1px solid var(--line);
@@ -61,7 +63,12 @@ input {
   outline: none;
 }
 
-input:focus {
+select {
+  appearance: auto;
+}
+
+input:focus,
+select:focus {
   border-color: var(--brand-bright);
   box-shadow: 0 0 0 3px rgba(31, 109, 97, 0.16);
 }
@@ -254,8 +261,8 @@ input:focus {
   gap: 4px;
 }
 
-.inline-limit input,
-.limit-field input {
+.inline-limit select,
+.limit-field select {
   text-align: center;
 }
 
@@ -588,7 +595,8 @@ input:focus {
     height: 28px;
   }
 
-  input {
+  input,
+  select {
     min-height: 46px;
     padding-inline: 10px;
   }
