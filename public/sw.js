@@ -1,5 +1,13 @@
 const CACHE_NAME = "olvidalo-v1";
-const CORE_ASSETS = ["./", "./index.html", "./manifest.webmanifest", "./icon.svg"];
+const CORE_ASSETS = [
+  "./",
+  "./index.html",
+  "./manifest.webmanifest",
+  "./icon.svg",
+  "./icon-180.png",
+  "./icon-192.png",
+  "./icon-512.png",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
