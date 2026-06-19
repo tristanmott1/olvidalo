@@ -9,7 +9,7 @@ A tiny personal scorekeeper for Olvídalo. It runs as a static web app, can be i
 - Starts a turn timer for each player.
 - Tracks fair hits and out hits.
 - Automatically stops a turn when the player's out limit is reached.
-- Sorts the leaderboard by longest time.
+- Scores by longest time or most fair hits.
 - Shows the next players on deck.
 
 ## Local Development

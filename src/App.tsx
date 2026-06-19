@@ -17,6 +17,7 @@ type Player = {
 };
 
 type HitKind = "fair" | "out";
+type ScoringMode = "longest" | "mostHits";
 
 type Hit = {
   kind: HitKind;
@@ -43,6 +44,11 @@ const PLAYERS_KEY = "olvidalo.players.v1";
 const DEFAULT_OUT_LIMIT = 2;
 const OUT_LIMIT_OPTIONS = [1, 2, 3, 4, 5] as const;
 const MAX_OUT_LIMIT = 5;
+const DEFAULT_SCORING_MODE: ScoringMode = "longest";
+const SCORING_LABELS: Record<ScoringMode, string> = {
+  longest: "Longest",
+  mostHits: "Most Hits",
+};
 
 function createId() {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -128,8 +134,23 @@ function formatTime(ms: number) {
   return `${minutes}:${seconds.toString().padStart(2, "0")}.${tenths}`;
 }
 
+function formatFairHits(count: number) {
+  return `${count} fair`;
+}
+
+function sortLeaderboard(results: TurnResult[], scoringMode: ScoringMode) {
+  return [...results].sort((left, right) => {
+    if (scoringMode === "mostHits") {
+      return right.fairHits - left.fairHits;
+    }
+
+    return right.elapsedMs - left.elapsedMs;
+  });
+}
+
 function App() {
   const [phase, setPhase] = useState<Phase>("setup");
+  const [scoringMode, setScoringMode] = useState<ScoringMode>(DEFAULT_SCORING_MODE);
   const [players, setPlayers] = useState<Player[]>(readStoredPlayers);
   const [draftName, setDraftName] = useState("");
   const [draftOutLimit, setDraftOutLimit] = useState(DEFAULT_OUT_LIMIT);
@@ -156,11 +177,8 @@ function App() {
   const currentElapsedMs = currentTurn ? getElapsedMs(currentTurn, now) : 0;
   const currentResult = currentTurn?.endedAt ? toTurnResult(currentTurn, now) : null;
   const leaderboard = useMemo(
-    () =>
-      [...completedTurns, ...(currentResult ? [currentResult] : [])].sort(
-        (left, right) => right.elapsedMs - left.elapsedMs,
-      ),
-    [completedTurns, currentResult],
+    () => sortLeaderboard([...completedTurns, ...(currentResult ? [currentResult] : [])], scoringMode),
+    [completedTurns, currentResult, scoringMode],
   );
   const onDeckPlayers = turnOrder.slice(currentIndex + 1, currentIndex + 4);
   const canStartGame = players.length > 0 && players.every((player) => player.name.trim());
@@ -405,8 +423,30 @@ function App() {
                 </div>
                 <div>
                   <span>Scoring</span>
-                  <strong>Longest</strong>
+                  <strong>{SCORING_LABELS[scoringMode]}</strong>
                 </div>
+              </div>
+            </div>
+
+            <div className="field scoring-field">
+              <span>Scoring</span>
+              <div className="segmented-control" role="radiogroup" aria-label="Scoring mode">
+                {Object.entries(SCORING_LABELS).map(([value, label]) => {
+                  const mode = value as ScoringMode;
+
+                  return (
+                    <button
+                      aria-checked={scoringMode === mode}
+                      className={scoringMode === mode ? "selected" : ""}
+                      key={mode}
+                      onClick={() => setScoringMode(mode)}
+                      role="radio"
+                      type="button"
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -425,6 +465,7 @@ function App() {
               <span>
                 Turn {currentIndex + 1} / {turnOrder.length}
               </span>
+              <span>{SCORING_LABELS[scoringMode]}</span>
               <span>{currentTurn.player.outLimit} outs</span>
             </div>
 
@@ -497,7 +538,7 @@ function App() {
           </section>
 
           <aside className="side-stack">
-            <Leaderboard results={leaderboard} />
+            <Leaderboard results={leaderboard} scoringMode={scoringMode} />
             <OnDeck players={onDeckPlayers} />
           </aside>
         </section>
@@ -511,7 +552,7 @@ function App() {
               <h1>Final Leaderboard</h1>
             </div>
 
-            <Leaderboard results={leaderboard} />
+            <Leaderboard results={leaderboard} scoringMode={scoringMode} />
 
             <div className="results-actions">
               <button className="primary" type="button" onClick={startGame}>
@@ -529,12 +570,12 @@ function App() {
   );
 }
 
-function Leaderboard({ results }: { results: TurnResult[] }) {
+function Leaderboard({ results, scoringMode }: { results: TurnResult[]; scoringMode: ScoringMode }) {
   return (
     <section className="panel leaderboard-panel">
       <div className="section-heading small">
         <h2>Leaderboard</h2>
-        <span>{results.length}</span>
+        <span>{SCORING_LABELS[scoringMode]}</span>
       </div>
 
       {results.length === 0 ? <p className="empty-state">No scores yet.</p> : null}
@@ -546,10 +587,14 @@ function Leaderboard({ results }: { results: TurnResult[] }) {
             <div>
               <strong>{result.player.name}</strong>
               <span>
-                {result.fairHits} fair · {result.outHits} out
+                {scoringMode === "mostHits"
+                  ? `${formatTime(result.elapsedMs)} · ${result.outHits} out`
+                  : `${formatFairHits(result.fairHits)} · ${result.outHits} out`}
               </span>
             </div>
-            <time>{formatTime(result.elapsedMs)}</time>
+            <strong className="leader-score">
+              {scoringMode === "mostHits" ? formatFairHits(result.fairHits) : formatTime(result.elapsedMs)}
+            </strong>
           </li>
         ))}
       </ol>

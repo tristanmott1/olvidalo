@@ -199,6 +199,7 @@ select:focus {
   place-items: center;
   min-width: 34px;
   height: 34px;
+  padding: 0 10px;
   border-radius: 999px;
   background: var(--surface-strong);
   color: var(--brand);
@@ -268,7 +269,8 @@ select:focus {
 
 .primary,
 .secondary,
-.icon-button {
+.icon-button,
+.segmented-control button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -310,6 +312,32 @@ select:focus {
 
 .icon-button.danger {
   color: var(--out);
+}
+
+.scoring-field {
+  gap: 8px;
+}
+
+.segmented-control {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+}
+
+.segmented-control button {
+  min-height: 42px;
+  background: transparent;
+  color: var(--brand);
+  padding: 0 12px;
+}
+
+.segmented-control button.selected {
+  background: var(--brand);
+  color: #ffffff;
 }
 
 .stat-grid {
@@ -474,10 +502,12 @@ select:focus {
   white-space: nowrap;
 }
 
-.leader-row time {
+.leader-score {
   color: var(--brand);
   font-variant-numeric: tabular-nums;
   font-weight: 950;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .deck-row {
