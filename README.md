@@ -5,11 +5,12 @@ A tiny personal scorekeeper for Olvídalo. It runs as a static web app, can be i
 ## What It Does
 
 - Saves player names and per-player out limits.
-- Randomizes one round of play.
+- Randomizes player order and keeps that order across multiple rounds.
 - Starts a turn timer for each player.
 - Tracks fair hits and out hits.
 - Automatically stops a turn when the player's out limit is reached.
 - Scores by longest time or most fair hits.
+- Shows cumulative and current-round leaderboards.
 - Shows the next players on deck.
 
 ## Local Development
