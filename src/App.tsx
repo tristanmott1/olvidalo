@@ -1,14 +1,23 @@
 import {
-  Clock3,
+  ArrowDown,
+  ArrowUp,
+  GripVertical,
+  Pause,
+  Play,
   Plus,
   RotateCcw,
   Shuffle,
-  TimerReset,
   Trash2,
-  Trophy,
   Undo2,
+  X,
 } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  type FormEvent,
+  type PointerEvent as ReactPointerEvent,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 type Player = {
   id: string;
@@ -16,8 +25,18 @@ type Player = {
   outLimit: number;
 };
 
+type Page = "home" | "play" | "results";
 type HitKind = "fair" | "out";
-type ScoringMode = "longest" | "mostHits";
+type ScoringType = "longest" | "hits";
+type RoundScoring = "cumulative" | "best";
+type TimerStatus = "idle" | "running" | "paused" | "done";
+type LeaderboardTab = "overall" | "current";
+
+type GameSettings = {
+  rounds: number;
+  scoringType: ScoringType;
+  roundScoring: RoundScoring;
+};
 
 type Hit = {
   kind: HitKind;
@@ -25,51 +44,53 @@ type Hit = {
 };
 
 type TurnState = {
-  player: Player;
+  playerId: string;
   round: number;
+  status: TimerStatus;
   startedAt: number | null;
-  endedAt: number | null;
+  elapsedMs: number;
   hits: Hit[];
 };
 
 type TurnResult = {
-  player: Player;
+  playerId: string;
   round: number;
   elapsedMs: number;
   fairHits: number;
   outHits: number;
 };
 
-type CumulativeResult = {
+type ScoreKey = {
+  roundScoring: RoundScoring;
+  scoringType: ScoringType;
+};
+
+type LeaderboardEntry = {
   player: Player;
+  score: number;
   elapsedMs: number;
   fairHits: number;
   outHits: number;
   rounds: number;
 };
 
-type LeaderboardEntry = {
-  id: string;
-  player: Player;
-  elapsedMs: number;
-  fairHits: number;
-  outHits: number;
-  rounds?: number;
-};
-
-type Phase = "setup" | "playing" | "complete";
-
 const PLAYERS_KEY = "olvidalo.players.v1";
+const SETTINGS_KEY = "olvidalo.settings.v1";
 const DEFAULT_OUT_LIMIT = 2;
 const OUT_LIMIT_OPTIONS = [1, 2, 3, 4, 5] as const;
-const MAX_OUT_LIMIT = 5;
-const DEFAULT_ROUND_COUNT = 1;
-const ROUND_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
-const MAX_ROUND_COUNT = 10;
-const DEFAULT_SCORING_MODE: ScoringMode = "longest";
-const SCORING_LABELS: Record<ScoringMode, string> = {
+const ROUND_OPTIONS = [1, 2, 3, 4, 5] as const;
+const DEFAULT_SETTINGS: GameSettings = {
+  rounds: 1,
+  scoringType: "longest",
+  roundScoring: "cumulative",
+};
+const SCORING_LABELS: Record<ScoringType, string> = {
   longest: "Longest",
-  mostHits: "Most Hits",
+  hits: "Hits",
+};
+const ROUND_SCORING_LABELS: Record<RoundScoring, string> = {
+  cumulative: "Cumulative",
+  best: "Best",
 };
 
 function createId() {
@@ -78,20 +99,8 @@ function createId() {
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function clampOutLimit(value: number) {
-  if (!Number.isFinite(value)) {
-    return DEFAULT_OUT_LIMIT;
-  }
-
-  return Math.min(MAX_OUT_LIMIT, Math.max(1, Math.round(value)));
-}
-
-function clampRoundCount(value: number) {
-  if (!Number.isFinite(value)) {
-    return DEFAULT_ROUND_COUNT;
-  }
-
-  return Math.min(MAX_ROUND_COUNT, Math.max(1, Math.round(value)));
+function clampChoice(value: number, allowed: readonly number[], fallback: number) {
+  return allowed.includes(value) ? value : fallback;
 }
 
 function readStoredPlayers(): Player[] {
@@ -107,7 +116,7 @@ function readStoredPlayers(): Player[] {
       .map((player) => ({
         id: typeof player.id === "string" ? player.id : createId(),
         name: typeof player.name === "string" ? player.name : "",
-        outLimit: clampOutLimit(Number(player.outLimit)),
+        outLimit: clampChoice(Number(player.outLimit), OUT_LIMIT_OPTIONS, DEFAULT_OUT_LIMIT),
       }))
       .filter((player) => player.name.trim().length > 0);
   } catch {
@@ -115,15 +124,40 @@ function readStoredPlayers(): Player[] {
   }
 }
 
+function readStoredSettings(): GameSettings {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const scoringType = parsed.scoringType === "hits" || parsed.scoringType === "mostHits" ? "hits" : "longest";
+    const roundScoring = parsed.roundScoring === "best" ? "best" : "cumulative";
+
+    return {
+      rounds: clampChoice(Number(parsed.rounds), ROUND_OPTIONS, DEFAULT_SETTINGS.rounds),
+      scoringType,
+      roundScoring,
+    };
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+}
+
 function shufflePlayers(players: Player[]) {
   const shuffled = [...players];
 
+  // Walk backward for a compact Fisher-Yates shuffle.
   for (let index = shuffled.length - 1; index > 0; index -= 1) {
     const swapIndex = Math.floor(Math.random() * (index + 1));
     [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
   }
 
   return shuffled;
+}
+
+function moveItem<T>(items: T[], fromIndex: number, toIndex: number) {
+  const nextItems = [...items];
+  const [item] = nextItems.splice(fromIndex, 1);
+  nextItems.splice(toIndex, 0, item);
+  return nextItems;
 }
 
 function countHits(hits: Hit[]) {
@@ -136,21 +170,32 @@ function countHits(hits: Hit[]) {
   );
 }
 
-function getElapsedMs(turn: TurnState, now: number) {
-  if (!turn.startedAt) {
-    return 0;
+function getTurnElapsedMs(turn: TurnState, now: number) {
+  if (turn.status !== "running" || !turn.startedAt) {
+    return turn.elapsedMs;
   }
 
-  return Math.max(0, (turn.endedAt ?? now) - turn.startedAt);
+  return turn.elapsedMs + Math.max(0, now - turn.startedAt);
+}
+
+function createTurn(playerId: string, round: number): TurnState {
+  return {
+    playerId,
+    round,
+    status: "idle",
+    startedAt: null,
+    elapsedMs: 0,
+    hits: [],
+  };
 }
 
 function toTurnResult(turn: TurnState, now: number): TurnResult {
   const counts = countHits(turn.hits);
 
   return {
-    player: turn.player,
+    playerId: turn.playerId,
     round: turn.round,
-    elapsedMs: getElapsedMs(turn, now),
+    elapsedMs: getTurnElapsedMs(turn, now),
     fairHits: counts.fair,
     outHits: counts.out,
   };
@@ -165,85 +210,106 @@ function formatTime(ms: number) {
   return `${minutes}:${seconds.toString().padStart(2, "0")}.${tenths}`;
 }
 
-function formatFairHits(count: number) {
-  return `${count} fair`;
+function effectiveRoundScoring(settings: GameSettings): RoundScoring {
+  return settings.rounds === 1 ? "cumulative" : settings.roundScoring;
 }
 
-function formatRounds(count: number) {
-  return `${count} round${count === 1 ? "" : "s"}`;
+function oppositeScoringType(scoringType: ScoringType): ScoringType {
+  return scoringType === "longest" ? "hits" : "longest";
 }
 
-function scoreValue(result: Pick<TurnResult, "elapsedMs" | "fairHits">, scoringMode: ScoringMode) {
-  return scoringMode === "mostHits" ? result.fairHits : result.elapsedMs;
+function oppositeRoundScoring(roundScoring: RoundScoring): RoundScoring {
+  return roundScoring === "cumulative" ? "best" : "cumulative";
 }
 
-function sortLeaderboard<T extends Pick<TurnResult, "player" | "elapsedMs" | "fairHits">>(
-  results: T[],
-  scoringMode: ScoringMode,
-  turnOrder: Player[],
-) {
-  const orderIndex = new Map(turnOrder.map((player, index) => [player.id, index]));
+function scoreResults(results: TurnResult[], key: ScoreKey) {
+  const values = results.map((result) => (key.scoringType === "longest" ? result.elapsedMs : result.fairHits));
 
-  return [...results].sort((left, right) => {
-    const scoreDifference = scoreValue(right, scoringMode) - scoreValue(left, scoringMode);
+  if (values.length === 0) {
+    return 0;
+  }
 
-    if (scoreDifference !== 0) {
-      return scoreDifference;
-    }
-
-    return (orderIndex.get(left.player.id) ?? 0) - (orderIndex.get(right.player.id) ?? 0);
-  });
+  return key.roundScoring === "cumulative"
+    ? values.reduce((total, value) => total + value, 0)
+    : Math.max(...values);
 }
 
-function buildCumulativeLeaderboard(
-  results: TurnResult[],
-  scoringMode: ScoringMode,
-  turnOrder: Player[],
-): CumulativeResult[] {
-  const totals = new Map<string, CumulativeResult>();
+function makeScoreKeys(settings: GameSettings): ScoreKey[] {
+  const selectedRoundScoring = effectiveRoundScoring(settings);
+  const otherRoundScoring = oppositeRoundScoring(selectedRoundScoring);
+  const otherScoringType = oppositeScoringType(settings.scoringType);
 
-  turnOrder.forEach((player) => {
-    totals.set(player.id, {
-      player,
-      elapsedMs: 0,
-      fairHits: 0,
-      outHits: 0,
-      rounds: 0,
+  // Build tie-breakers by crossing the selected and alternate score dimensions.
+  return [
+    { roundScoring: selectedRoundScoring, scoringType: settings.scoringType },
+    { roundScoring: otherRoundScoring, scoringType: settings.scoringType },
+    { roundScoring: selectedRoundScoring, scoringType: otherScoringType },
+    { roundScoring: otherRoundScoring, scoringType: otherScoringType },
+  ];
+}
+
+function buildLeaderboard(results: TurnResult[], players: Player[], settings: GameSettings): LeaderboardEntry[] {
+  const scoreKeys = makeScoreKeys(settings);
+  const orderIndex = new Map(players.map((player, index) => [player.id, index]));
+
+  return players
+    .map((player) => {
+      const playerResults = results.filter((result) => result.playerId === player.id);
+      const primaryScore = scoreResults(playerResults, scoreKeys[0]);
+
+      return {
+        player,
+        score: primaryScore,
+        elapsedMs: scoreResults(playerResults, {
+          roundScoring: scoreKeys[0].roundScoring,
+          scoringType: "longest",
+        }),
+        fairHits: scoreResults(playerResults, {
+          roundScoring: scoreKeys[0].roundScoring,
+          scoringType: "hits",
+        }),
+        outHits: playerResults.reduce((total, result) => total + result.outHits, 0),
+        rounds: playerResults.length,
+        tieScores: scoreKeys.map((key) => scoreResults(playerResults, key)),
+      };
+    })
+    .filter((entry) => entry.rounds > 0)
+    .sort((left, right) => {
+      // Compare all score dimensions before falling back to the initial order.
+      for (let index = 0; index < left.tieScores.length; index += 1) {
+        const difference = right.tieScores[index] - left.tieScores[index];
+
+        if (difference !== 0) {
+          return difference;
+        }
+      }
+
+      return (orderIndex.get(left.player.id) ?? 0) - (orderIndex.get(right.player.id) ?? 0);
     });
-  });
+}
 
-  results.forEach((result) => {
-    const total = totals.get(result.player.id);
+function getMainScoreLabel(entry: LeaderboardEntry, settings: GameSettings) {
+  return settings.scoringType === "longest" ? formatTime(entry.score) : `${entry.score} hits`;
+}
 
-    if (!total) {
-      return;
-    }
-
-    total.elapsedMs += result.elapsedMs;
-    total.fairHits += result.fairHits;
-    total.outHits += result.outHits;
-    total.rounds += 1;
-  });
-
-  return sortLeaderboard(
-    [...totals.values()].filter((total) => total.rounds > 0),
-    scoringMode,
-    turnOrder,
-  );
+function getSubScoreLabel(entry: LeaderboardEntry, settings: GameSettings) {
+  const otherScore = settings.scoringType === "longest" ? `${entry.fairHits} hits` : formatTime(entry.elapsedMs);
+  return `${otherScore} / ${entry.outHits} out`;
 }
 
 function App() {
-  const [phase, setPhase] = useState<Phase>("setup");
-  const [scoringMode, setScoringMode] = useState<ScoringMode>(DEFAULT_SCORING_MODE);
-  const [roundCount, setRoundCount] = useState(DEFAULT_ROUND_COUNT);
+  const [page, setPage] = useState<Page>("home");
   const [players, setPlayers] = useState<Player[]>(readStoredPlayers);
+  const [settings, setSettings] = useState<GameSettings>(readStoredSettings);
   const [draftName, setDraftName] = useState("");
   const [draftOutLimit, setDraftOutLimit] = useState(DEFAULT_OUT_LIMIT);
+  const [gamePlayers, setGamePlayers] = useState<Player[]>([]);
   const [currentRound, setCurrentRound] = useState(1);
-  const [turnOrder, setTurnOrder] = useState<Player[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [currentPlayerIndex, setCurrentPlayerIndex] = useState(0);
   const [currentTurn, setCurrentTurn] = useState<TurnState | null>(null);
   const [completedTurns, setCompletedTurns] = useState<TurnResult[]>([]);
+  const [leaderboardTab, setLeaderboardTab] = useState<LeaderboardTab>("overall");
+  const [draggingPlayerId, setDraggingPlayerId] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -251,43 +317,78 @@ function App() {
   }, [players]);
 
   useEffect(() => {
-    if (!currentTurn?.startedAt || currentTurn.endedAt) {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  }, [settings]);
+
+  useEffect(() => {
+    if (currentTurn?.status !== "running") {
       return undefined;
     }
 
     const interval = window.setInterval(() => setNow(Date.now()), 50);
     return () => window.clearInterval(interval);
-  }, [currentTurn?.startedAt, currentTurn?.endedAt]);
+  }, [currentTurn?.status]);
 
-  const currentCounts = useMemo(() => countHits(currentTurn?.hits ?? []), [currentTurn?.hits]);
-  const currentElapsedMs = currentTurn ? getElapsedMs(currentTurn, now) : 0;
-  const currentResult = currentTurn?.endedAt ? toTurnResult(currentTurn, now) : null;
+  useEffect(() => {
+    if (!draggingPlayerId) {
+      return undefined;
+    }
+
+    const activeDraggingPlayerId = draggingPlayerId;
+
+    function handlePointerMove(event: PointerEvent) {
+      const row = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-player-id]");
+      const overPlayerId = row?.dataset.playerId;
+
+      // Move the dragged row as soon as the pointer crosses another row.
+      if (overPlayerId && overPlayerId !== activeDraggingPlayerId) {
+        reorderPlayer(activeDraggingPlayerId, overPlayerId);
+      }
+    }
+
+    function handlePointerUp() {
+      setDraggingPlayerId(null);
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    };
+  }, [draggingPlayerId, players]);
+
+  const currentPlayer = currentTurn
+    ? gamePlayers.find((player) => player.id === currentTurn.playerId) ?? null
+    : null;
+  const currentCounts = countHits(currentTurn?.hits ?? []);
+  const currentElapsedMs = currentTurn ? getTurnElapsedMs(currentTurn, now) : 0;
+  const currentDoneResult = currentTurn?.status === "done" ? toTurnResult(currentTurn, now) : null;
   const scoredTurns = useMemo(
-    () => [...completedTurns, ...(currentResult ? [currentResult] : [])],
-    [completedTurns, currentResult],
+    () => [...completedTurns, ...(currentDoneResult ? [currentDoneResult] : [])],
+    [completedTurns, currentDoneResult],
   );
-  const cumulativeLeaderboard = useMemo(
-    () => buildCumulativeLeaderboard(scoredTurns, scoringMode, turnOrder),
-    [scoredTurns, scoringMode, turnOrder],
+  const overallLeaderboard = useMemo(
+    () => buildLeaderboard(scoredTurns, gamePlayers, settings),
+    [scoredTurns, gamePlayers, settings],
   );
   const currentRoundLeaderboard = useMemo(
-    () =>
-      sortLeaderboard(
-        scoredTurns.filter((result) => result.round === currentRound),
-        scoringMode,
-        turnOrder,
-      ),
-    [scoredTurns, currentRound, scoringMode, turnOrder],
+    () => buildLeaderboard(scoredTurns.filter((result) => result.round === currentRound), gamePlayers, settings),
+    [scoredTurns, currentRound, gamePlayers, settings],
   );
-  const onDeckPlayers =
-    currentIndex < turnOrder.length - 1
-      ? turnOrder.slice(currentIndex + 1, currentIndex + 4)
-      : currentRound < roundCount
-        ? turnOrder.slice(0, 3)
-        : [];
-  const canStartGame = players.length > 0 && players.every((player) => player.name.trim());
-  const isLastTurn = currentIndex === turnOrder.length - 1;
-  const isLastRound = currentRound === roundCount;
+  const onDeckPlayers = getOnDeckPlayers(gamePlayers, currentRound, currentPlayerIndex, settings.rounds);
+  const canStart = players.length > 0 && players.every((player) => player.name.trim().length > 0);
+  const roundScoring = effectiveRoundScoring(settings);
+
+  function updateSettings(updates: Partial<GameSettings>) {
+    setSettings((currentSettings) => ({
+      ...currentSettings,
+      ...updates,
+    }));
+  }
 
   function addPlayer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -299,7 +400,7 @@ function App() {
 
     setPlayers((currentPlayers) => [
       ...currentPlayers,
-      { id: createId(), name, outLimit: clampOutLimit(draftOutLimit) },
+      { id: createId(), name, outLimit: draftOutLimit },
     ]);
     setDraftName("");
     setDraftOutLimit(DEFAULT_OUT_LIMIT);
@@ -307,18 +408,7 @@ function App() {
 
   function updatePlayer(playerId: string, updates: Partial<Player>) {
     setPlayers((currentPlayers) =>
-      currentPlayers.map((player) =>
-        player.id === playerId
-          ? {
-              ...player,
-              ...updates,
-              outLimit:
-                updates.outLimit === undefined
-                  ? player.outLimit
-                  : clampOutLimit(Number(updates.outLimit)),
-            }
-          : player,
-      ),
+      currentPlayers.map((player) => (player.id === playerId ? { ...player, ...updates } : player)),
     );
   }
 
@@ -326,36 +416,99 @@ function App() {
     setPlayers((currentPlayers) => currentPlayers.filter((player) => player.id !== playerId));
   }
 
-  function startGame() {
-    const readyPlayers = players.map((player) => ({
+  function reorderPlayer(playerId: string, overPlayerId: string) {
+    setPlayers((currentPlayers) => {
+      const fromIndex = currentPlayers.findIndex((player) => player.id === playerId);
+      const toIndex = currentPlayers.findIndex((player) => player.id === overPlayerId);
+
+      if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) {
+        return currentPlayers;
+      }
+
+      return moveItem(currentPlayers, fromIndex, toIndex);
+    });
+  }
+
+  function movePlayer(playerId: string, direction: -1 | 1) {
+    setPlayers((currentPlayers) => {
+      const fromIndex = currentPlayers.findIndex((player) => player.id === playerId);
+      const toIndex = fromIndex + direction;
+
+      if (fromIndex < 0 || toIndex < 0 || toIndex >= currentPlayers.length) {
+        return currentPlayers;
+      }
+
+      return moveItem(currentPlayers, fromIndex, toIndex);
+    });
+  }
+
+  function beginDrag(event: ReactPointerEvent<HTMLButtonElement>, playerId: string) {
+    event.preventDefault();
+    setDraggingPlayerId(playerId);
+  }
+
+  function startGame(order: Player[]) {
+    const orderedPlayers = order.map((player) => ({
       ...player,
       name: player.name.trim(),
-      outLimit: clampOutLimit(player.outLimit),
     }));
-    const shuffled = shufflePlayers(readyPlayers);
 
-    setPlayers(readyPlayers);
-    setTurnOrder(shuffled);
+    if (orderedPlayers.length === 0) {
+      return;
+    }
+
+    setPlayers(orderedPlayers);
+    setGamePlayers(orderedPlayers);
     setCompletedTurns([]);
     setCurrentRound(1);
-    setCurrentIndex(0);
-    setCurrentTurn({ player: shuffled[0], round: 1, startedAt: null, endedAt: null, hits: [] });
-    setPhase("playing");
+    setCurrentPlayerIndex(0);
+    setCurrentTurn(createTurn(orderedPlayers[0].id, 1));
+    setLeaderboardTab("overall");
+    setPage("play");
     setNow(Date.now());
   }
 
-  function resetToSetup() {
-    setPhase("setup");
-    setTurnOrder([]);
+  function exitToHome() {
+    setPage("home");
+    setGamePlayers([]);
     setCompletedTurns([]);
     setCurrentRound(1);
-    setCurrentIndex(0);
+    setCurrentPlayerIndex(0);
     setCurrentTurn(null);
+    setLeaderboardTab("overall");
   }
 
-  function startTurnTimer() {
+  function startTurn() {
     setCurrentTurn((turn) =>
-      turn && !turn.startedAt ? { ...turn, startedAt: Date.now(), endedAt: null } : turn,
+      turn && turn.status === "idle"
+        ? { ...turn, status: "running", startedAt: Date.now() }
+        : turn,
+    );
+    setNow(Date.now());
+  }
+
+  function pauseTurn() {
+    const timestamp = Date.now();
+
+    setCurrentTurn((turn) =>
+      turn && turn.status === "running"
+        ? {
+            ...turn,
+            // Freeze elapsed time before leaving the running state.
+            elapsedMs: getTurnElapsedMs(turn, timestamp),
+            startedAt: null,
+            status: "paused",
+          }
+        : turn,
+    );
+    setNow(timestamp);
+  }
+
+  function resumeTurn() {
+    setCurrentTurn((turn) =>
+      turn && turn.status === "paused"
+        ? { ...turn, status: "running", startedAt: Date.now() }
+        : turn,
     );
     setNow(Date.now());
   }
@@ -364,68 +517,131 @@ function App() {
     const timestamp = Date.now();
 
     setCurrentTurn((turn) => {
-      if (!turn?.startedAt || turn.endedAt) {
+      if (!turn || turn.status !== "running" || !currentPlayer) {
         return turn;
       }
 
-      const hit: Hit = { kind, elapsedMs: timestamp - turn.startedAt };
-      const hits = [...turn.hits, hit];
-      const outs = hits.filter((entry) => entry.kind === "out").length;
+      const elapsedMs = getTurnElapsedMs(turn, timestamp);
+      const hits = [...turn.hits, { kind, elapsedMs }];
+      const outs = countHits(hits).out;
 
-      return {
-        ...turn,
-        hits,
-        endedAt: outs >= turn.player.outLimit ? timestamp : null,
-      };
+      if (outs >= currentPlayer.outLimit) {
+        return { ...turn, elapsedMs, hits, startedAt: null, status: "done" };
+      }
+
+      return { ...turn, hits };
     });
     setNow(timestamp);
   }
 
   function undoLastHit() {
     setCurrentTurn((turn) => {
-      if (!turn?.startedAt || turn.hits.length === 0) {
+      if (!turn || turn.hits.length === 0) {
         return turn;
       }
 
-      return {
-        ...turn,
-        hits: turn.hits.slice(0, -1),
-        endedAt: null,
-      };
+      const hits = turn.hits.slice(0, -1);
+
+      // Undoing the final out reopens the turn in a paused state.
+      if (turn.status === "done") {
+        return { ...turn, hits, status: "paused" };
+      }
+
+      return { ...turn, hits };
     });
     setNow(Date.now());
   }
 
   function advanceTurn() {
-    if (!currentTurn?.endedAt) {
+    if (!currentTurn || currentTurn.status !== "done") {
       return;
     }
 
     const result = toTurnResult(currentTurn, now);
-    const nextCompletedTurns = [...completedTurns, result];
+    const isLastPlayer = currentPlayerIndex === gamePlayers.length - 1;
+    const isLastRound = currentRound === settings.rounds;
 
-    setCompletedTurns(nextCompletedTurns);
+    setCompletedTurns((currentTurns) => [...currentTurns, result]);
 
-    if (isLastTurn && isLastRound) {
+    if (isLastPlayer && isLastRound) {
       setCurrentTurn(null);
-      setPhase("complete");
+      setPage("results");
       return;
     }
 
-    if (isLastTurn) {
+    if (isLastPlayer) {
       const nextRound = currentRound + 1;
 
       setCurrentRound(nextRound);
-      setCurrentIndex(0);
-      setCurrentTurn({ player: turnOrder[0], round: nextRound, startedAt: null, endedAt: null, hits: [] });
-      setNow(Date.now());
+      setCurrentPlayerIndex(0);
+      setCurrentTurn(createTurn(gamePlayers[0].id, nextRound));
+      setLeaderboardTab("overall");
       return;
     }
 
-    const nextIndex = currentIndex + 1;
-    setCurrentIndex(nextIndex);
-    setCurrentTurn({ player: turnOrder[nextIndex], round: currentRound, startedAt: null, endedAt: null, hits: [] });
-    setNow(Date.now());
+    const nextPlayerIndex = currentPlayerIndex + 1;
+    setCurrentPlayerIndex(nextPlayerIndex);
+    setCurrentTurn(createTurn(gamePlayers[nextPlayerIndex].id, currentRound));
+    setLeaderboardTab("overall");
+  }
+
+  function handleTurnAction() {
+    if (!currentTurn) {
+      return;
+    }
+
+    if (currentTurn.status === "idle") {
+      startTurn();
+      return;
+    }
+
+    if (currentTurn.status === "running") {
+      pauseTurn();
+      return;
+    }
+
+    if (currentTurn.status === "paused") {
+      resumeTurn();
+      return;
+    }
+
+    advanceTurn();
+  }
+
+  function getTurnActionLabel() {
+    if (!currentTurn) {
+      return "Start";
+    }
+
+    if (currentTurn.status === "idle") {
+      return "Start";
+    }
+
+    if (currentTurn.status === "running") {
+      return "Pause";
+    }
+
+    if (currentTurn.status === "paused") {
+      return "Resume";
+    }
+
+    if (currentPlayerIndex === gamePlayers.length - 1) {
+      return currentRound === settings.rounds ? "Results" : "Next Round";
+    }
+
+    return "Next Player";
+  }
+
+  function renderTurnActionIcon() {
+    if (currentTurn?.status === "running") {
+      return <Pause size={20} />;
+    }
+
+    if (currentTurn?.status === "done") {
+      return <ArrowDown size={20} />;
+    }
+
+    return <Play size={20} />;
   }
 
   return (
@@ -433,373 +649,346 @@ function App() {
       <header className="app-header">
         <div className="brand">
           <img src="./icon.svg" alt="" className="brand-mark" />
-          <div>
-            <p>Olvídalo</p>
-            <span>{phase === "setup" ? "Roster" : phase === "playing" ? "Live Game" : "Results"}</span>
-          </div>
+          <strong>Olvídalo</strong>
         </div>
-
-        {phase !== "setup" ? (
-          <button className="icon-button" type="button" onClick={resetToSetup} aria-label="Reset game">
-            <RotateCcw size={20} />
-          </button>
-        ) : null}
       </header>
 
-      {phase === "setup" ? (
-        <section className="setup-layout">
-          <section className="panel roster-panel">
+      {page === "home" ? (
+        <div className="page-stack">
+          <section className="section-panel">
             <div className="section-heading">
               <h1>Players</h1>
-              <span>{players.length}</span>
+              <button className="secondary" type="button" onClick={() => setPlayers(shufflePlayers(players))}>
+                <Shuffle size={18} />
+                Randomize
+              </button>
             </div>
 
             <form className="add-player" onSubmit={addPlayer}>
-              <label className="field name-field">
-                <span>Name</span>
-                <input
-                  value={draftName}
-                  onChange={(event) => setDraftName(event.target.value)}
-                  placeholder="Player name"
-                  autoComplete="off"
-                />
-              </label>
-
-              <label className="field limit-field">
-                <span>Outs</span>
-                <select
-                  value={draftOutLimit}
-                  onChange={(event) => setDraftOutLimit(clampOutLimit(Number(event.target.value)))}
-                >
-                  {OUT_LIMIT_OPTIONS.map((outLimit) => (
-                    <option key={outLimit} value={outLimit}>
-                      {outLimit}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <button className="secondary add-button" type="submit" disabled={!draftName.trim()}>
+              <input
+                value={draftName}
+                onChange={(event) => setDraftName(event.target.value)}
+                placeholder="Name"
+                autoComplete="off"
+              />
+              <select
+                aria-label="Out limit"
+                value={draftOutLimit}
+                onChange={(event) => setDraftOutLimit(Number(event.target.value))}
+              >
+                {OUT_LIMIT_OPTIONS.map((outLimit) => (
+                  <option key={outLimit} value={outLimit}>
+                    {outLimit}
+                  </option>
+                ))}
+              </select>
+              <button className="primary icon-only-mobile" type="submit" disabled={!draftName.trim()}>
                 <Plus size={18} />
                 Add
               </button>
             </form>
 
             <div className="player-list">
-              {players.length === 0 ? <p className="empty-state">No players yet.</p> : null}
-
               {players.map((player, index) => (
-                <article className="player-row" key={player.id}>
-                  <span className="player-number">{index + 1}</span>
-
-                  <label className="field inline-field">
-                    <span>Name</span>
-                    <input
-                      value={player.name}
-                      onChange={(event) => updatePlayer(player.id, { name: event.target.value })}
-                      autoComplete="off"
-                    />
-                  </label>
-
-                  <label className="field inline-limit">
-                    <span>Outs</span>
-                    <select
-                      value={player.outLimit}
-                      onChange={(event) =>
-                        updatePlayer(player.id, { outLimit: clampOutLimit(Number(event.target.value)) })
-                      }
-                    >
-                      {OUT_LIMIT_OPTIONS.map((outLimit) => (
-                        <option key={outLimit} value={outLimit}>
-                          {outLimit}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
+                <article
+                  className={draggingPlayerId === player.id ? "player-row dragging" : "player-row"}
+                  data-player-id={player.id}
+                  key={player.id}
+                >
                   <button
-                    className="icon-button danger"
+                    className="drag-handle"
                     type="button"
-                    onClick={() => removePlayer(player.id)}
-                    aria-label={`Remove ${player.name || "player"}`}
+                    onPointerDown={(event) => beginDrag(event, player.id)}
+                    aria-label={`Move ${player.name}`}
                   >
-                    <Trash2 size={18} />
+                    <GripVertical size={18} />
                   </button>
+                  <input
+                    value={player.name}
+                    onChange={(event) => updatePlayer(player.id, { name: event.target.value })}
+                    autoComplete="off"
+                  />
+                  <select
+                    aria-label={`${player.name || "Player"} outs`}
+                    value={player.outLimit}
+                    onChange={(event) => updatePlayer(player.id, { outLimit: Number(event.target.value) })}
+                  >
+                    {OUT_LIMIT_OPTIONS.map((outLimit) => (
+                      <option key={outLimit} value={outLimit}>
+                        {outLimit}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="row-actions">
+                    <button
+                      className="icon-button"
+                      type="button"
+                      onClick={() => movePlayer(player.id, -1)}
+                      disabled={index === 0}
+                      aria-label={`Move ${player.name} up`}
+                    >
+                      <ArrowUp size={16} />
+                    </button>
+                    <button
+                      className="icon-button"
+                      type="button"
+                      onClick={() => movePlayer(player.id, 1)}
+                      disabled={index === players.length - 1}
+                      aria-label={`Move ${player.name} down`}
+                    >
+                      <ArrowDown size={16} />
+                    </button>
+                    <button
+                      className="icon-button danger"
+                      type="button"
+                      onClick={() => removePlayer(player.id)}
+                      aria-label={`Remove ${player.name || "player"}`}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
                 </article>
               ))}
             </div>
           </section>
 
-          <section className="panel start-panel">
-            <div>
-              <h2>Game</h2>
-              <div className="stat-grid">
-                <div>
-                  <span>Rounds</span>
-                  <strong>{roundCount}</strong>
-                </div>
-                <div>
-                  <span>Scoring</span>
-                  <strong>{SCORING_LABELS[scoringMode]}</strong>
-                </div>
-              </div>
+          <section className="section-panel compact-panel">
+            <div className="section-heading">
+              <h1>Game</h1>
             </div>
 
-            <label className="field round-field">
-              <span>Rounds</span>
-              <select
-                value={roundCount}
-                onChange={(event) => setRoundCount(clampRoundCount(Number(event.target.value)))}
-              >
-                {ROUND_OPTIONS.map((roundOption) => (
-                  <option key={roundOption} value={roundOption}>
-                    {roundOption}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div className="field scoring-field">
-              <span>Scoring</span>
-              <div className="segmented-control" role="radiogroup" aria-label="Scoring mode">
-                {Object.entries(SCORING_LABELS).map(([value, label]) => {
-                  const mode = value as ScoringMode;
-
-                  return (
-                    <button
-                      aria-checked={scoringMode === mode}
-                      className={scoringMode === mode ? "selected" : ""}
-                      key={mode}
-                      onClick={() => setScoringMode(mode)}
-                      role="radio"
-                      type="button"
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <button className="primary wide-button" type="button" onClick={startGame} disabled={!canStartGame}>
-              <Shuffle size={20} />
-              Randomize Order
-            </button>
-          </section>
-        </section>
-      ) : null}
-
-      {phase === "playing" && currentTurn ? (
-        <section className="game-layout">
-          <section className="panel turn-panel">
-            <div className="turn-meta">
-              <span>
-                Round {currentRound} / {roundCount}
-              </span>
-              <span>
-                Turn {currentIndex + 1} / {turnOrder.length}
-              </span>
-              <span>{SCORING_LABELS[scoringMode]}</span>
-              <span>{currentTurn.player.outLimit} outs</span>
-            </div>
-
-            <div className="current-player">
-              <h1>{currentTurn.player.name}</h1>
-              {currentTurn.endedAt ? <span className="done-pill">Done</span> : null}
-            </div>
-
-            <div className={currentTurn.endedAt ? "timer ended" : "timer"}>
-              <Clock3 size={28} />
-              <span>{formatTime(currentElapsedMs)}</span>
-            </div>
-
-            <div className="hit-totals">
-              <div>
-                <span>Fair</span>
-                <strong>{currentCounts.fair}</strong>
-              </div>
-              <div>
-                <span>Out</span>
-                <strong>
-                  {currentCounts.out} / {currentTurn.player.outLimit}
-                </strong>
-              </div>
-            </div>
-
-            {!currentTurn.startedAt ? (
-              <button className="primary wide-button" type="button" onClick={startTurnTimer}>
-                <TimerReset size={22} />
-                Start Timer
-              </button>
-            ) : (
-              <div className="hit-buttons">
-                <button
-                  className="hit-button fair-hit"
-                  type="button"
-                  onClick={() => recordHit("fair")}
-                  disabled={Boolean(currentTurn.endedAt)}
+            <div className="settings-grid">
+              <label className="field">
+                <span>Rounds</span>
+                <select
+                  value={settings.rounds}
+                  onChange={(event) => updateSettings({ rounds: Number(event.target.value) })}
                 >
-                  FAIR
-                </button>
-                <button
-                  className="hit-button out-hit"
-                  type="button"
-                  onClick={() => recordHit("out")}
-                  disabled={Boolean(currentTurn.endedAt)}
-                >
-                  OUT
-                </button>
+                  {ROUND_OPTIONS.map((roundOption) => (
+                    <option key={roundOption} value={roundOption}>
+                      {roundOption}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="field">
+                <span>Scoring</span>
+                <SegmentedControl
+                  options={SCORING_LABELS}
+                  value={settings.scoringType}
+                  onChange={(scoringType) => updateSettings({ scoringType })}
+                />
               </div>
-            )}
 
-            <div className="turn-actions">
-              <button
-                className="secondary"
-                type="button"
-                onClick={undoLastHit}
-                disabled={!currentTurn.startedAt || currentTurn.hits.length === 0}
-              >
-                <Undo2 size={18} />
-                Undo
-              </button>
-
-              {currentTurn.endedAt ? (
-                <button className="primary" type="button" onClick={advanceTurn}>
-                  {isLastTurn ? (isLastRound ? "Show Results" : "Next Round") : "Next Player"}
-                </button>
+              {settings.rounds > 1 ? (
+                <div className="field">
+                  <span>Round scoring</span>
+                  <SegmentedControl
+                    options={ROUND_SCORING_LABELS}
+                    value={settings.roundScoring}
+                    onChange={(roundScoring) => updateSettings({ roundScoring })}
+                  />
+                </div>
               ) : null}
             </div>
-          </section>
 
-          <aside className="side-stack">
-            <Leaderboard
-              badge={SCORING_LABELS[scoringMode]}
-              emptyText="No completed turns yet."
-              entries={cumulativeLeaderboard.map((result) => ({
-                id: result.player.id,
-                ...result,
-              }))}
-              scoringMode={scoringMode}
-              title="Cumulative"
-            />
-            <Leaderboard
-              badge={`Round ${currentRound}`}
-              emptyText="No scores this round yet."
-              entries={currentRoundLeaderboard.map((result) => ({
-                id: `${result.player.id}-${result.round}`,
-                ...result,
-              }))}
-              scoringMode={scoringMode}
-              title="Current Round"
-            />
-            <OnDeck players={onDeckPlayers} />
-          </aside>
-        </section>
+            <button className="primary wide-button" type="button" onClick={() => startGame(players)} disabled={!canStart}>
+              Start
+            </button>
+          </section>
+        </div>
       ) : null}
 
-      {phase === "complete" ? (
-        <section className="results-layout">
-          <section className="panel results-panel">
-            <div className="results-title">
-              <Trophy size={34} />
-              <h1>Final Results</h1>
-            </div>
-
-            <Leaderboard
-              badge={SCORING_LABELS[scoringMode]}
-              emptyText="No completed turns yet."
-              entries={cumulativeLeaderboard.map((result) => ({
-                id: result.player.id,
-                ...result,
-              }))}
-              scoringMode={scoringMode}
-              title="Cumulative"
-            />
-            <Leaderboard
-              badge={`Round ${currentRound}`}
-              emptyText="No scores this round yet."
-              entries={currentRoundLeaderboard.map((result) => ({
-                id: `${result.player.id}-${result.round}`,
-                ...result,
-              }))}
-              scoringMode={scoringMode}
-              title="Final Round"
-            />
-
-            <div className="results-actions">
-              <button className="primary" type="button" onClick={startGame}>
-                <Shuffle size={18} />
-                Randomize Again
-              </button>
-              <button className="secondary" type="button" onClick={resetToSetup}>
-                Edit Players
+      {page === "play" && currentTurn && currentPlayer ? (
+        <div className="page-stack">
+          <section className="section-panel play-panel">
+            <div className="top-actions">
+              <button className="secondary" type="button" onClick={exitToHome}>
+                <X size={18} />
+                Exit
               </button>
             </div>
+
+            <div className="status-row">
+              <span>
+                Round {currentRound}/{settings.rounds}
+              </span>
+              <span>
+                Player {currentPlayerIndex + 1}/{gamePlayers.length}
+              </span>
+              <span>{SCORING_LABELS[settings.scoringType]}</span>
+              {settings.rounds > 1 ? <span>{ROUND_SCORING_LABELS[roundScoring]}</span> : null}
+            </div>
+
+            <h1 className="player-title">
+              {currentPlayer.name} <span>({currentPlayer.outLimit} outs)</span>
+            </h1>
+
+            <div className={currentTurn.status === "done" ? "timer done" : "timer"}>
+              {formatTime(currentElapsedMs)}
+            </div>
+
+            <div className="hit-buttons">
+              <button
+                className="hit-button fair-hit"
+                type="button"
+                onClick={() => recordHit("fair")}
+                disabled={currentTurn.status !== "running"}
+              >
+                Fair {currentCounts.fair}
+              </button>
+              <button
+                className="hit-button out-hit"
+                type="button"
+                onClick={() => recordHit("out")}
+                disabled={currentTurn.status !== "running"}
+              >
+                Out {currentCounts.out}/{currentPlayer.outLimit}
+              </button>
+            </div>
+
+            <button
+              className="secondary wide-button"
+              type="button"
+              onClick={undoLastHit}
+              disabled={currentTurn.hits.length === 0}
+            >
+              <Undo2 size={18} />
+              Undo
+            </button>
+
+            <button className="primary wide-button control-button" type="button" onClick={handleTurnAction}>
+              {renderTurnActionIcon()}
+              {getTurnActionLabel()}
+            </button>
           </section>
-        </section>
+
+          <OnDeck players={onDeckPlayers} />
+
+          <section className="section-panel">
+            <SegmentedControl
+              options={{ overall: "Overall", current: "Current" }}
+              value={leaderboardTab}
+              onChange={setLeaderboardTab}
+            />
+            <Leaderboard
+              entries={leaderboardTab === "overall" ? overallLeaderboard : currentRoundLeaderboard}
+              settings={settings}
+            />
+          </section>
+        </div>
+      ) : null}
+
+      {page === "results" ? (
+        <div className="page-stack">
+          <section className="section-panel">
+            <div className="top-actions split">
+              <button className="secondary" type="button" onClick={exitToHome}>
+                <X size={18} />
+                Exit
+              </button>
+              <button className="primary" type="button" onClick={() => startGame(gamePlayers)}>
+                <RotateCcw size={18} />
+                Play Again
+              </button>
+            </div>
+
+            <div className="section-heading small">
+              <h2>Overall</h2>
+            </div>
+            <Leaderboard entries={overallLeaderboard} settings={settings} />
+          </section>
+
+          {ROUND_OPTIONS.slice(0, settings.rounds).map((round) => (
+            <section className="section-panel" key={round}>
+              <div className="section-heading small">
+                <h2>Round {round}</h2>
+              </div>
+              <Leaderboard
+                entries={buildLeaderboard(
+                  completedTurns.filter((result) => result.round === round),
+                  gamePlayers,
+                  settings,
+                )}
+                settings={settings}
+              />
+            </section>
+          ))}
+        </div>
       ) : null}
     </main>
   );
 }
 
-function Leaderboard({
-  badge,
-  emptyText,
-  entries,
-  scoringMode,
-  title,
+function getOnDeckPlayers(players: Player[], round: number, playerIndex: number, rounds: number) {
+  if (players.length === 0) {
+    return [];
+  }
+
+  const currentTurnNumber = (round - 1) * players.length + playerIndex;
+  const totalTurns = rounds * players.length;
+
+  return [1, 2, 3]
+    .map((offset) => currentTurnNumber + offset)
+    .filter((turnNumber) => turnNumber < totalTurns)
+    .map((turnNumber) => players[turnNumber % players.length]);
+}
+
+function SegmentedControl<T extends string>({
+  onChange,
+  options,
+  value,
 }: {
-  badge: string;
-  emptyText: string;
-  entries: LeaderboardEntry[];
-  scoringMode: ScoringMode;
-  title: string;
+  onChange: (value: T) => void;
+  options: Record<T, string>;
+  value: T;
 }) {
   return (
-    <section className="panel leaderboard-panel">
-      <div className="section-heading small">
-        <h2>{title}</h2>
-        <span>{badge}</span>
-      </div>
+    <div className="segmented-control">
+      {Object.entries(options).map(([optionValue, label]) => (
+        <button
+          className={value === optionValue ? "selected" : ""}
+          key={optionValue}
+          onClick={() => onChange(optionValue as T)}
+          type="button"
+        >
+          {label as string}
+        </button>
+      ))}
+    </div>
+  );
+}
 
-      {entries.length === 0 ? <p className="empty-state">{emptyText}</p> : null}
+function Leaderboard({ entries, settings }: { entries: LeaderboardEntry[]; settings: GameSettings }) {
+  if (entries.length === 0) {
+    return <p className="empty-state">No scores yet.</p>;
+  }
 
-      <ol className="leaderboard-list">
-        {entries.map((entry, index) => (
-          <li key={entry.id} className={index === 0 ? "leader leader-row" : "leader-row"}>
-            <span className="rank">{index + 1}</span>
-            <div>
-              <strong>{entry.player.name}</strong>
-              <span>
-                {scoringMode === "mostHits"
-                  ? `${formatTime(entry.elapsedMs)} · ${entry.outHits} out`
-                  : `${formatFairHits(entry.fairHits)} · ${entry.outHits} out`}
-                {entry.rounds ? ` · ${formatRounds(entry.rounds)}` : ""}
-              </span>
-            </div>
-            <strong className="leader-score">
-              {scoringMode === "mostHits" ? formatFairHits(entry.fairHits) : formatTime(entry.elapsedMs)}
-            </strong>
-          </li>
-        ))}
-      </ol>
-    </section>
+  return (
+    <ol className="leaderboard-list">
+      {entries.map((entry, index) => (
+        <li className={index === 0 ? "leader-row leader" : "leader-row"} key={entry.player.id}>
+          <span className="rank">{index + 1}</span>
+          <div>
+            <strong>{entry.player.name}</strong>
+            <span>{getSubScoreLabel(entry, settings)}</span>
+          </div>
+          <strong className="leader-score">{getMainScoreLabel(entry, settings)}</strong>
+        </li>
+      ))}
+    </ol>
   );
 }
 
 function OnDeck({ players }: { players: Player[] }) {
   return (
-    <section className="panel deck-panel">
-      <div className="section-heading small">
-        <h2>On Deck</h2>
-        <span>{players.length}</span>
-      </div>
-
-      {players.length === 0 ? <p className="empty-state">No one on deck.</p> : null}
-
+    <section className="section-panel">
       <div className="deck-list">
+        {players.length === 0 ? <p className="empty-state">No one on deck.</p> : null}
+
         {players.map((player, index) => (
-          <article className="deck-row" key={player.id}>
+          <article className="deck-row" key={`${player.id}-${index}`}>
             <span>{index + 1}</span>
             <strong>{player.name}</strong>
             <em>{player.outLimit} outs</em>
