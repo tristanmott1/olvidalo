@@ -1,0 +1,18 @@
+{
+  "name": "Olvídalo",
+  "short_name": "Olvídalo",
+  "description": "A personal scorekeeper for Olvídalo.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#f7f9f7",
+  "theme_color": "#16463f",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
