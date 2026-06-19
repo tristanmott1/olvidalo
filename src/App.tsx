@@ -82,15 +82,15 @@ const ROUND_OPTIONS = [1, 2, 3, 4, 5] as const;
 const DEFAULT_SETTINGS: GameSettings = {
   rounds: 1,
   scoringType: "longest",
-  roundScoring: "cumulative",
+  roundScoring: "best",
 };
 const SCORING_LABELS: Record<ScoringType, string> = {
   longest: "Longest",
   hits: "Hits",
 };
 const ROUND_SCORING_LABELS: Record<RoundScoring, string> = {
-  cumulative: "Cumulative",
   best: "Best",
+  cumulative: "Cumulative",
 };
 
 function createId() {
@@ -129,7 +129,7 @@ function readStoredSettings(): GameSettings {
     const raw = localStorage.getItem(SETTINGS_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
     const scoringType = parsed.scoringType === "hits" || parsed.scoringType === "mostHits" ? "hits" : "longest";
-    const roundScoring = parsed.roundScoring === "best" ? "best" : "cumulative";
+    const roundScoring = parsed.roundScoring === "cumulative" ? "cumulative" : "best";
 
     return {
       rounds: clampChoice(Number(parsed.rounds), ROUND_OPTIONS, DEFAULT_SETTINGS.rounds),
