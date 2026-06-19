@@ -234,6 +234,49 @@ function scoreResults(results: TurnResult[], key: ScoreKey) {
     : Math.max(...values);
 }
 
+function getResultScore(result: TurnResult, scoringType: ScoringType) {
+  return scoringType === "longest" ? result.elapsedMs : result.fairHits;
+}
+
+function getBestDisplayResult(results: TurnResult[], scoringType: ScoringType) {
+  const otherScoringType = oppositeScoringType(scoringType);
+
+  // Choose one real round for Best display so the detail stats stay together.
+  return [...results].sort((left, right) => {
+    const primaryDifference = getResultScore(right, scoringType) - getResultScore(left, scoringType);
+
+    if (primaryDifference !== 0) {
+      return primaryDifference;
+    }
+
+    const otherDifference = getResultScore(right, otherScoringType) - getResultScore(left, otherScoringType);
+
+    if (otherDifference !== 0) {
+      return otherDifference;
+    }
+
+    return left.round - right.round;
+  })[0];
+}
+
+function getDisplayStats(results: TurnResult[], settings: GameSettings) {
+  if (effectiveRoundScoring(settings) === "best") {
+    const bestResult = getBestDisplayResult(results, settings.scoringType);
+
+    return {
+      elapsedMs: bestResult?.elapsedMs ?? 0,
+      fairHits: bestResult?.fairHits ?? 0,
+      outHits: bestResult?.outHits ?? 0,
+    };
+  }
+
+  return {
+    elapsedMs: scoreResults(results, { roundScoring: "cumulative", scoringType: "longest" }),
+    fairHits: scoreResults(results, { roundScoring: "cumulative", scoringType: "hits" }),
+    outHits: results.reduce((total, result) => total + result.outHits, 0),
+  };
+}
+
 function makeScoreKeys(settings: GameSettings): ScoreKey[] {
   const selectedRoundScoring = effectiveRoundScoring(settings);
   const otherRoundScoring = oppositeRoundScoring(selectedRoundScoring);
@@ -256,19 +299,14 @@ function buildLeaderboard(results: TurnResult[], players: Player[], settings: Ga
     .map((player) => {
       const playerResults = results.filter((result) => result.playerId === player.id);
       const primaryScore = scoreResults(playerResults, scoreKeys[0]);
+      const displayStats = getDisplayStats(playerResults, settings);
 
       return {
         player,
         score: primaryScore,
-        elapsedMs: scoreResults(playerResults, {
-          roundScoring: scoreKeys[0].roundScoring,
-          scoringType: "longest",
-        }),
-        fairHits: scoreResults(playerResults, {
-          roundScoring: scoreKeys[0].roundScoring,
-          scoringType: "hits",
-        }),
-        outHits: playerResults.reduce((total, result) => total + result.outHits, 0),
+        elapsedMs: displayStats.elapsedMs,
+        fairHits: displayStats.fairHits,
+        outHits: displayStats.outHits,
         rounds: playerResults.length,
         tieScores: scoreKeys.map((key) => scoreResults(playerResults, key)),
       };
