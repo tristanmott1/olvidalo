@@ -34,8 +34,8 @@ export function createKickIcon(kind: KickMarker["kind"]) {
   return L.divIcon({
     className: `kick-marker ${kind}-marker`,
     html: `<span>${kind === "fair" ? "F" : "O"}</span>`,
-    iconSize: [30, 30],
-    iconAnchor: [15, 15],
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
   });
 }
 
@@ -43,8 +43,8 @@ export function createSelectedIcon() {
   return L.divIcon({
     className: "kick-marker selected-marker",
     html: "<span></span>",
-    iconSize: [30, 30],
-    iconAnchor: [15, 15],
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
   });
 }
 
@@ -52,8 +52,8 @@ export function createSwingIcon() {
   return L.divIcon({
     className: "kick-marker swing-marker",
     html: "<span>S</span>",
-    iconSize: [34, 34],
-    iconAnchor: [17, 17],
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
   });
 }
 
@@ -61,7 +61,7 @@ export function createCurrentLocationIcon() {
   return L.divIcon({
     className: "current-location-marker",
     html: "<span></span>",
-    iconSize: [28, 28],
-    iconAnchor: [14, 14],
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
   });
 }

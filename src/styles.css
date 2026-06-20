@@ -619,8 +619,8 @@ button:focus-visible {
 .kick-marker span {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 20px;
+  height: 20px;
   border-radius: 999px;
 }
 
@@ -634,13 +634,13 @@ button:focus-visible {
 
 .selected-marker span {
   background: var(--ball);
-  box-shadow: 0 0 0 6px rgba(242, 189, 61, 0.22);
+  box-shadow: 0 0 0 5px rgba(242, 189, 61, 0.22);
 }
 
 .swing-marker span {
   background: var(--brand);
   color: #fffdf7;
-  box-shadow: 0 0 0 6px rgba(18, 63, 56, 0.16);
+  box-shadow: 0 0 0 5px rgba(18, 63, 56, 0.16);
 }
 
 .current-location-marker {
@@ -652,8 +652,8 @@ button:focus-visible {
 
 .current-location-marker span {
   display: block;
-  width: 14px;
-  height: 14px;
+  width: 11px;
+  height: 11px;
   border: 2px solid #ffffff;
   border-radius: 999px;
   background: #1f7fe5;
