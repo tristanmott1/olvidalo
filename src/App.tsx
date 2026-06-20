@@ -985,7 +985,7 @@ function App() {
             </div>
 
             <div className="section-heading small">
-              <h1>Rules</h1>
+              <h1>Sacred Rules</h1>
             </div>
 
             <ol className="rules-list">
