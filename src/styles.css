@@ -278,6 +278,12 @@ button:focus-visible {
   gap: 12px;
 }
 
+.time-settings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .segmented-control {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -403,6 +409,15 @@ button:focus-visible {
 
 .out-hit {
   background: linear-gradient(180deg, #d84d3f, var(--out));
+}
+
+.bonus-hit {
+  background: linear-gradient(180deg, #f5ca61, var(--ball));
+  color: #2b1d04;
+}
+
+.penalty-hit {
+  background: linear-gradient(180deg, #a45446, #7f3b34);
 }
 
 .control-button {
@@ -642,6 +657,10 @@ button:focus-visible {
   .hit-button {
     min-height: 84px;
     font-size: 1.12rem;
+  }
+
+  .time-settings {
+    grid-template-columns: 1fr;
   }
 
   .leader-row {

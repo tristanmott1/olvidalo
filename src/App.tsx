@@ -28,6 +28,7 @@ type Player = {
 
 type Page = "home" | "play" | "results" | "rules";
 type HitKind = "fair" | "out";
+type AdjustmentKind = "bonus" | "penalty";
 type ScoringType = "longest" | "hits";
 type RoundScoring = "cumulative" | "best";
 type TimerStatus = "idle" | "running" | "paused" | "done";
@@ -37,12 +38,20 @@ type GameSettings = {
   rounds: number;
   scoringType: ScoringType;
   roundScoring: RoundScoring;
+  bonusSeconds: number;
+  penaltySeconds: number;
 };
 
-type Hit = {
-  kind: HitKind;
-  elapsedMs: number;
-};
+type TurnEvent =
+  | {
+      kind: HitKind;
+      elapsedMs: number;
+    }
+  | {
+      kind: AdjustmentKind;
+      elapsedMs: number;
+      deltaMs: number;
+    };
 
 type TurnState = {
   playerId: string;
@@ -50,7 +59,7 @@ type TurnState = {
   status: TimerStatus;
   startedAt: number | null;
   elapsedMs: number;
-  hits: Hit[];
+  events: TurnEvent[];
 };
 
 type TurnResult = {
@@ -84,6 +93,8 @@ const DEFAULT_SETTINGS: GameSettings = {
   rounds: 1,
   scoringType: "longest",
   roundScoring: "best",
+  bonusSeconds: 60,
+  penaltySeconds: 15,
 };
 const SCORING_LABELS: Record<ScoringType, string> = {
   longest: "Longest",
@@ -114,6 +125,11 @@ function createId() {
 
 function clampChoice(value: number, allowed: readonly number[], fallback: number) {
   return allowed.includes(value) ? value : fallback;
+}
+
+function readSeconds(value: unknown, fallback: number) {
+  const seconds = Math.floor(Number(value));
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : fallback;
 }
 
 function readStoredPlayers(): Player[] {
@@ -148,6 +164,8 @@ function readStoredSettings(): GameSettings {
       rounds: clampChoice(Number(parsed.rounds), ROUND_OPTIONS, DEFAULT_SETTINGS.rounds),
       scoringType,
       roundScoring,
+      bonusSeconds: readSeconds(parsed.bonusSeconds, DEFAULT_SETTINGS.bonusSeconds),
+      penaltySeconds: readSeconds(parsed.penaltySeconds, DEFAULT_SETTINGS.penaltySeconds),
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -173,22 +191,32 @@ function moveItem<T>(items: T[], fromIndex: number, toIndex: number) {
   return nextItems;
 }
 
-function countHits(hits: Hit[]) {
-  return hits.reduce(
-    (counts, hit) => ({
-      fair: counts.fair + (hit.kind === "fair" ? 1 : 0),
-      out: counts.out + (hit.kind === "out" ? 1 : 0),
+function countHits(events: TurnEvent[]) {
+  return events.reduce(
+    (counts, event) => ({
+      fair: counts.fair + (event.kind === "fair" ? 1 : 0),
+      out: counts.out + (event.kind === "out" ? 1 : 0),
     }),
     { fair: 0, out: 0 },
   );
 }
 
-function getTurnElapsedMs(turn: TurnState, now: number) {
+function getAdjustmentMs(events: TurnEvent[]) {
+  // Add bonus and penalty events without changing the frozen base clock.
+  return events.reduce((total, event) => total + ("deltaMs" in event ? event.deltaMs : 0), 0);
+}
+
+function getTurnBaseElapsedMs(turn: TurnState, now: number) {
+  // Keep the clock math separate from bonus and penalty adjustments.
   if (turn.status !== "running" || !turn.startedAt) {
     return turn.elapsedMs;
   }
 
   return turn.elapsedMs + Math.max(0, now - turn.startedAt);
+}
+
+function getTurnElapsedMs(turn: TurnState, now: number) {
+  return getTurnBaseElapsedMs(turn, now) + getAdjustmentMs(turn.events);
 }
 
 function createTurn(playerId: string, round: number): TurnState {
@@ -198,12 +226,12 @@ function createTurn(playerId: string, round: number): TurnState {
     status: "idle",
     startedAt: null,
     elapsedMs: 0,
-    hits: [],
+    events: [],
   };
 }
 
 function toTurnResult(turn: TurnState, now: number): TurnResult {
-  const counts = countHits(turn.hits);
+  const counts = countHits(turn.events);
 
   return {
     playerId: turn.playerId,
@@ -215,12 +243,13 @@ function toTurnResult(turn: TurnState, now: number): TurnResult {
 }
 
 function formatTime(ms: number) {
-  const totalTenths = Math.floor(ms / 100);
+  const sign = ms < 0 ? "-" : "";
+  const totalTenths = Math.floor(Math.abs(ms) / 100);
   const minutes = Math.floor(totalTenths / 600);
   const seconds = Math.floor((totalTenths % 600) / 10);
   const tenths = totalTenths % 10;
 
-  return `${minutes}:${seconds.toString().padStart(2, "0")}.${tenths}`;
+  return `${sign}${minutes}:${seconds.toString().padStart(2, "0")}.${tenths}`;
 }
 
 function effectiveRoundScoring(settings: GameSettings): RoundScoring {
@@ -415,7 +444,7 @@ function App() {
   const currentPlayer = currentTurn
     ? gamePlayers.find((player) => player.id === currentTurn.playerId) ?? null
     : null;
-  const currentCounts = countHits(currentTurn?.hits ?? []);
+  const currentCounts = countHits(currentTurn?.events ?? []);
   const currentElapsedMs = currentTurn ? getTurnElapsedMs(currentTurn, now) : 0;
   const currentDoneResult = currentTurn?.status === "done" ? toTurnResult(currentTurn, now) : null;
   const scoredTurns = useMemo(
@@ -546,7 +575,7 @@ function App() {
         ? {
             ...turn,
             // Freeze elapsed time before leaving the running state.
-            elapsedMs: getTurnElapsedMs(turn, timestamp),
+            elapsedMs: getTurnBaseElapsedMs(turn, timestamp),
             startedAt: null,
             status: "paused",
           }
@@ -572,33 +601,51 @@ function App() {
         return turn;
       }
 
-      const elapsedMs = getTurnElapsedMs(turn, timestamp);
-      const hits = [...turn.hits, { kind, elapsedMs }];
-      const outs = countHits(hits).out;
+      const baseElapsedMs = getTurnBaseElapsedMs(turn, timestamp);
+      const elapsedMs = baseElapsedMs + getAdjustmentMs(turn.events);
+      const events = [...turn.events, { kind, elapsedMs }];
+      const outs = countHits(events).out;
 
+      // Freeze the base clock when the final out lands; adjustments stay event-derived.
       if (outs >= currentPlayer.outLimit) {
-        return { ...turn, elapsedMs, hits, startedAt: null, status: "done" };
+        return { ...turn, elapsedMs: baseElapsedMs, events, startedAt: null, status: "done" };
       }
 
-      return { ...turn, hits };
+      return { ...turn, events };
     });
     setNow(timestamp);
   }
 
-  function undoLastHit() {
+  function recordAdjustment(kind: AdjustmentKind) {
+    const timestamp = Date.now();
+    const deltaMs = (kind === "bonus" ? settings.bonusSeconds : -settings.penaltySeconds) * 1000;
+
     setCurrentTurn((turn) => {
-      if (!turn || turn.hits.length === 0) {
+      if (!turn) {
         return turn;
       }
 
-      const hits = turn.hits.slice(0, -1);
+      const elapsedMs = getTurnBaseElapsedMs(turn, timestamp) + getAdjustmentMs(turn.events) + deltaMs;
+      return { ...turn, events: [...turn.events, { kind, elapsedMs, deltaMs }] };
+    });
+    setNow(timestamp);
+  }
 
-      // Undoing the final out reopens the turn in a paused state.
-      if (turn.status === "done") {
-        return { ...turn, hits, status: "paused" };
+  function undoLastEvent() {
+    setCurrentTurn((turn) => {
+      if (!turn || turn.events.length === 0) {
+        return turn;
       }
 
-      return { ...turn, hits };
+      const lastEvent = turn.events[turn.events.length - 1];
+      const events = turn.events.slice(0, -1);
+
+      // Undoing the final out reopens the turn in a paused state.
+      if (turn.status === "done" && lastEvent.kind === "out") {
+        return { ...turn, events, status: "paused" };
+      }
+
+      return { ...turn, events };
     });
     setNow(Date.now());
   }
@@ -847,6 +894,29 @@ function App() {
                   />
                 </div>
               ) : null}
+
+              <div className="time-settings">
+                <label className="field">
+                  <span>Bonus seconds</span>
+                  <input
+                    min="0"
+                    step="1"
+                    type="number"
+                    value={settings.bonusSeconds}
+                    onChange={(event) => updateSettings({ bonusSeconds: readSeconds(event.target.value, 0) })}
+                  />
+                </label>
+                <label className="field">
+                  <span>Penalty seconds</span>
+                  <input
+                    min="0"
+                    step="1"
+                    type="number"
+                    value={settings.penaltySeconds}
+                    onChange={(event) => updateSettings({ penaltySeconds: readSeconds(event.target.value, 0) })}
+                  />
+                </label>
+              </div>
             </div>
 
             <button className="primary wide-button" type="button" onClick={() => startGame(players)} disabled={!canStart}>
@@ -902,13 +972,27 @@ function App() {
               >
                 Out {currentCounts.out}/{currentPlayer.outLimit}
               </button>
+              <button
+                className="hit-button bonus-hit"
+                type="button"
+                onClick={() => recordAdjustment("bonus")}
+              >
+                Bonus +{settings.bonusSeconds}s
+              </button>
+              <button
+                className="hit-button penalty-hit"
+                type="button"
+                onClick={() => recordAdjustment("penalty")}
+              >
+                Penalty -{settings.penaltySeconds}s
+              </button>
             </div>
 
             <button
               className="secondary wide-button"
               type="button"
-              onClick={undoLastHit}
-              disabled={currentTurn.hits.length === 0}
+              onClick={undoLastEvent}
+              disabled={currentTurn.events.length === 0}
             >
               <Undo2 size={18} />
               Undo
