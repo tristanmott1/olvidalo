@@ -2,409 +2,395 @@
 
 ## Summary
 
-Add session persistence and location-aware kick mapping without changing the core Olvidalo game flow. The app should restore an active game after refresh or app close, reopen any running timer as paused, and delete the saved game only when the user explicitly exits. Location mode should be optional per game. If enabled, each Fair or Out kick opens an empty map picker, and saved kick locations can later be viewed in one reusable map viewer from Play or Results.
+Keep the existing Olvidalo game flow, active-game persistence, and kick mapping, then refine the map experience around a fixed swing reference. When location is enabled at game start, the user should set up the game map by choosing the swing location and orienting the map with normal Leaflet pan/zoom. Later kick pickers and kick viewers should reuse that saved center/zoom, show the swing for reference, and show the user's current location as a blue dot.
 
-The implementation should keep the code simple and intentional. It should replace narrow old assumptions, not pile special cases on top of them. The main goal is a small, clear state model where timer state, kick events, saved locations, map filters, and persistence all have one obvious place to live.
+The implementation should stay simple. Do not create separate map systems for setup, picking, and viewing. Use one small map modal with clear modes and one map settings object stored in the active game. Remove or replace any older "last map center only" assumptions that no longer fit. The final code should look like the intended design from the start, not a stack of patches.
 
 ## Desired User Flow
 
 1. The user presses Start on the Home page.
 2. The app asks whether to use location for this game.
-3. If the user declines, the game starts normally with no map picker.
+3. If the user declines, the game starts normally with no map picker and no map setup.
 4. If the user accepts, the browser requests location permission.
-5. If permission is granted, location mode is enabled for that game.
-6. If permission is denied or unavailable, location mode is disabled for that game.
-7. During Play, every Fair or Out press records the kick immediately.
-8. If location mode is enabled, an empty map picker opens after that Fair or Out.
-9. The timer keeps running while the picker is open.
-10. The user can dismiss the picker or select a point and save it.
-11. The Play page has a small map button that opens the kick map viewer.
-12. The Results page has the same map viewer button.
-13. Refreshing or closing the app restores the active game.
-14. A running timer always restores as paused.
-15. Exiting Play or Results clears the saved active game.
+5. If permission is denied or unavailable, location mode is disabled and the game starts normally.
+6. If permission is granted, a map setup modal opens before the game starts.
+7. The setup modal shows the user's current location as a blue dot.
+8. The user pans/zooms the map and taps the swing location.
+9. The user saves the setup.
+10. The game starts with location mode enabled.
+11. During Play, every Fair or Out press records the kick immediately.
+12. If location mode is enabled, an empty kick picker opens after that Fair or Out.
+13. The timer keeps running while the picker is open.
+14. The picker uses the saved setup center/zoom, shows the swing marker, and shows the current location blue dot.
+15. The user can dismiss the picker or select a point and save it.
+16. The Play page map button opens the kick viewer.
+17. The Results page map button opens the same kick viewer.
+18. The viewer uses the saved setup center/zoom, shows the swing marker, and shows the current location blue dot.
+19. Refreshing or closing the app restores the active game.
+20. A running timer always restores as paused.
+21. Exiting Play or Results clears the saved active game and all saved locations.
 
-## Dependencies
+## Existing Implemented Base
 
-- Add `leaflet` for the map.
-- Add `@types/leaflet` for TypeScript.
-- Import Leaflet CSS once in `src/main.tsx` or from the map component.
-- Do not use Google Maps, API keys, billing, or external app secrets.
-- Use OpenStreetMap tiles with proper attribution.
+The app already has:
 
-This will require an npm install during implementation. If the sandbox blocks the install, request approval for the install command.
+- Leaflet installed.
+- `src/MapModal.tsx`.
+- `src/map.ts`.
+- Active-game localStorage persistence.
+- Event IDs on turn events.
+- Saved kick locations on Fair/Out events.
+- Results preserving completed event data.
+- Play and Results map viewer buttons.
+- Service worker cache `olvidalo-v9`.
+
+The next pass should update these pieces rather than adding a second map layer.
 
 ## State Model
 
-Keep the existing game model, but make kick events and active game persistence explicit.
-
-### Types To Add Or Update
+Keep one source of truth for map setup:
 
 ```ts
-type LocationPoint = {
-  lat: number;
-  lng: number;
-  accuracy: number | null;
+type MapView = {
+  center: LocationPoint;
+  zoom: number;
 };
 
-type KickEvent = {
-  id: string;
-  kind: HitKind;
-  elapsedMs: number;
-  location: LocationPoint | null;
+type MapSetup = {
+  swing: LocationPoint;
+  view: MapView;
 };
+```
 
-type AdjustmentEvent = {
-  id: string;
-  kind: AdjustmentKind;
-  elapsedMs: number;
-  deltaMs: number;
-};
+Update the active game:
 
-type TurnEvent = KickEvent | AdjustmentEvent;
-
-type LocationMode = "off" | "on";
-
+```ts
 type ActiveGame = {
-  page: Exclude<Page, "home" | "rules">;
+  page: "play" | "results";
   players: Player[];
   settings: GameSettings;
   currentPlayerIndex: number;
   currentRound: number;
   currentTurn: TurnState | null;
-  results: TurnResult[];
+  completedTurns: TurnResult[];
   locationMode: LocationMode;
-  lastMapCenter: LocationPoint | null;
+  mapSetup: MapSetup | null;
 };
 ```
 
-### Existing Types To Keep
+Replace older map state:
 
-- `Player`
-- `Page`
-- `HitKind`
-- `AdjustmentKind`
-- `ScoringType`
-- `RoundScoring`
-- `TimerStatus`
-- `GameSettings`
-- `TurnState`
-- `TurnResult`
-- leaderboard helper types
+- Remove `lastMapCenter` from active game and component state.
+- Do not use kick locations to choose the default map view.
+- Do not store map filter state in localStorage.
+- Do not store open modal state in localStorage.
 
-### Existing Types To Remove Or Simplify
+Keep:
 
-- Remove any assumptions that Turn events do not have IDs.
-- Remove any location state that is tied to one UI surface instead of the event model.
-- Do not add separate stored leaderboard state.
-- Do not add a history/archive model.
+- `TurnEvent.location` as the only source of truth for saved kicks.
+- `TurnResult.events` as the completed-turn source of truth.
+- `TurnState` as the active-turn source of truth.
 
-## Persistence
+## Modal State
 
-Add one new localStorage key:
+Use one modal component with three modes:
 
 ```ts
-const ACTIVE_GAME_KEY = "olvidalo.activeGame.v1";
-```
+type SetupState = {
+  center: LocationPoint;
+  currentLocation: LocationPoint;
+  selectedSwing: LocationPoint | null;
+  zoom: number;
+};
 
-Persist the active game whenever these values change:
-
-- `page` when it is `play` or `results`
-- `gamePlayers`
-- `settings`
-- `currentPlayerIndex`
-- `currentRound`
-- `currentTurn`
-- `results`
-- `locationMode`
-- `lastMapCenter`
-
-Do not persist:
-
-- Home draft player name
-- Home draft out limit
-- leaderboard tab
-- open modal state
-- selected map filters
-- selected picker point before save
-- animation frame timing
-
-### Restore Rules
-
-On app load:
-
-1. Read players and settings as usual.
-2. Read `ACTIVE_GAME_KEY`.
-3. Validate the active game shape defensively.
-4. If invalid, ignore it and start on Home.
-5. If valid, restore page, players, settings, turn, results, and location mode.
-6. If the saved current turn is `running`, convert it to `paused`.
-7. Set `startedAt` to `null` on restored paused or done turns.
-
-### Clear Rules
-
-Clear `ACTIVE_GAME_KEY` only when:
-
-- The user exits from Play.
-- The user exits from Results.
-- The user starts a brand new game from Home.
-
-Play Again should start a fresh active game with the same players, same order, and same settings, then replace the saved active game.
-
-## Location Permission Flow
-
-Add a simple start-game branch:
-
-1. Home Start validates there are players.
-2. Show a compact location prompt modal.
-3. If the user chooses No, start with `locationMode: "off"`.
-4. If the user chooses Yes, call `navigator.geolocation.getCurrentPosition`.
-5. If permission succeeds, start with `locationMode: "on"` and store that location as `lastMapCenter`.
-6. If permission fails, start with `locationMode: "off"` and show a small non-blocking message.
-
-Do not keep asking during the same game after permission fails.
-
-## Kick Location Picker
-
-Create one focused picker modal for saving the location of the kick that was just recorded.
-
-### Picker State
-
-```ts
 type PickerState = {
   eventId: string;
-  center: LocationPoint;
+  currentLocation: LocationPoint | null;
   selected: LocationPoint | null;
 };
-```
 
-### Picker Behavior
-
-- Opens only after Fair or Out.
-- Opens only if location mode is on.
-- Shows an empty map.
-- Does not show previous kicks.
-- Centers on current phone location every time.
-- Timer keeps running while open.
-- Dismiss saves no location.
-- Submit saves the selected location onto that event.
-- Submit also updates `lastMapCenter`.
-- Undoing the event removes its saved location because the whole event is removed.
-- If Undo removes the event currently being picked, close the picker.
-
-### Current Location Lookup
-
-When opening the picker:
-
-1. Record the Fair or Out immediately.
-2. Request current location.
-3. If it succeeds, open picker centered there.
-4. If it fails, disable location mode and do not open picker.
-
-This keeps the game usable even when location stops working mid-game.
-
-## Kick Map Viewer
-
-Create one reusable viewer modal that can be opened from Play or Results.
-
-### Viewer State
-
-```ts
 type ViewerState = {
   source: "play" | "results";
   playerId: string | "all";
   round: number | "all";
+  currentLocation: LocationPoint | null;
 };
 ```
 
-### Viewer Defaults
+Do not persist these modal states. They are UI state only.
 
-When opened from Play:
+## Location Permission And Setup Flow
 
-- `playerId` defaults to the current player.
-- `round` defaults to `all`.
+Update the start-game location branch:
 
-When opened from Results:
+1. Home Start validates players.
+2. Show the existing location prompt.
+3. If the user chooses No, start with `locationMode: "off"` and `mapSetup: null`.
+4. If the user chooses Yes, call `navigator.geolocation.getCurrentPosition`.
+5. If permission fails, start with `locationMode: "off"` and `mapSetup: null`.
+6. If permission succeeds, open setup modal centered on the user's current location.
+7. The game does not start until setup is saved or canceled.
+8. If setup is canceled, start with `locationMode: "off"` and `mapSetup: null`.
+9. If setup is saved, start with `locationMode: "on"` and the saved `mapSetup`.
 
-- `playerId` defaults to `all`.
-- `round` defaults to `all`.
+This makes the swing reference required for any location-enabled game.
 
-### Viewer Filters
+## Setup Map
 
-Use two simple dropdowns:
+The setup map should:
 
-- Player: `All` plus every player.
-- Round: `All` plus every round in the game.
+- Show no kick markers.
+- Show the user's current location as a blue dot.
+- Let the user tap the swing location.
+- Show the selected swing marker immediately.
+- Let the user pan and zoom before saving.
+- Save the map center and zoom at the moment the user presses Save.
+- Require a selected swing before Save is enabled.
 
-### Viewer Data
+No rotation is needed. “Orientation” means center plus zoom.
 
-The viewer should build map markers from saved locations on Fair and Out events.
+## Kick Location Picker
 
-Data sources:
+The picker should:
 
-- Completed turns from `results`.
-- The current in-progress turn, if present.
+- Open after Fair or Out only when `locationMode === "on"` and `mapSetup` exists.
+- Record the kick before opening the picker.
+- Keep the timer running.
+- Show no previous kicks.
+- Use `mapSetup.view.center` and `mapSetup.view.zoom`.
+- Show the swing marker from `mapSetup.swing`.
+- Show the user's current location as a blue dot.
+- Let the user tap one kick location.
+- Save the selected point onto that event.
+- Dismiss without saving a location.
+- Close if Undo removes the pending event.
 
-This requires `TurnResult` to include the original kick events or a derived location summary. Prefer storing enough event detail in `TurnResult` so completed turn locations do not need a parallel data structure.
+When opening the picker:
 
-Recommended update:
+1. Open immediately using `mapSetup` and `currentLocation: null`.
+2. Request current location.
+3. If it succeeds, update the picker blue dot.
+4. If it fails, keep the picker open without a blue dot.
 
-```ts
-type TurnResult = {
-  playerId: string;
-  round: number;
-  elapsedMs: number;
-  fairHits: number;
-  outHits: number;
-  events: TurnEvent[];
-};
-```
+Do not disable location mode if a later current-location refresh fails. The saved swing setup is still valid, and manual map selection still works.
 
-Leaderboard helpers should continue to use `elapsedMs`, `fairHits`, and `outHits`. Map helpers should use `events`.
+## Kick Map Viewer
+
+The viewer should:
+
+- Reuse the same map modal component.
+- Use `mapSetup.view.center` and `mapSetup.view.zoom`.
+- Show the swing marker from `mapSetup.swing`.
+- Show the user's current location as a blue dot when available.
+- Show saved Fair and Out markers after filters are applied.
+- Keep Player and Round dropdown filters.
+
+Viewer defaults:
+
+- Opened from Play: `playerId` is the current player, `round` is `all`.
+- Opened from Results: `playerId` is `all`, `round` is `all`.
+
+When opening the viewer:
+
+1. Open immediately using `mapSetup` and `currentLocation: null`.
+2. Request current location.
+3. If it succeeds, update the viewer blue dot.
+4. If it fails, leave the viewer open without a blue dot.
+
+If location mode is off or `mapSetup` is missing, the map button should either be hidden or disabled. Prefer hiding it to keep the UI minimal.
 
 ## Map Component Structure
 
-Keep map code isolated so `App.tsx` does not become crowded.
+Keep the map code isolated:
 
-Recommended files:
-
-- `src/map.ts`
-- `src/MapModal.tsx`
-- `src/map.css` only if the map styles become too bulky for `styles.css`
+- `src/map.ts` for map types and Leaflet icon helpers.
+- `src/MapModal.tsx` for setup, picker, and viewer modes.
+- Keep styles in `src/styles.css` unless the map CSS becomes too large.
 
 ### `src/map.ts`
 
-Small helpers only:
+Add or update helpers:
 
-- Load/normalize map marker data.
-- Create marker labels.
-- Fit bounds safely.
-- Define Leaflet marker icons.
+- `MapView`
+- `MapSetup`
+- `LocationPoint`
+- `KickMarker`
+- `createKickIcon`
+- `createSelectedIcon`
+- `createSwingIcon`
+- `createCurrentLocationIcon`
+- `toLeafletPoint`
+
+Keep helpers tiny and direct. Avoid a general map abstraction.
 
 ### `src/MapModal.tsx`
 
-One component with two modes:
+Use Leaflet imperatively with refs:
+
+- Create the map once.
+- Update the center/zoom when mode opens.
+- Track map movement in setup mode so Save can capture the current view.
+- Rebuild the marker layer from React props.
+- Destroy the map on unmount.
+
+The prop shape should remain explicit:
 
 ```ts
 type MapModalProps =
   | {
-      mode: "picker";
+      mode: "setup";
       center: LocationPoint;
+      currentLocation: LocationPoint;
+      selectedSwing: LocationPoint | null;
+      onCancel: () => void;
+      onSave: (setup: MapSetup) => void;
+      onSelectSwing: (point: LocationPoint) => void;
+    }
+  | {
+      mode: "picker";
+      setup: MapSetup;
+      currentLocation: LocationPoint | null;
       selected: LocationPoint | null;
-      onSelect: (point: LocationPoint) => void;
       onCancel: () => void;
       onSave: () => void;
+      onSelect: (point: LocationPoint) => void;
     }
   | {
       mode: "viewer";
+      setup: MapSetup;
+      currentLocation: LocationPoint | null;
       markers: KickMarker[];
       players: Player[];
       rounds: number;
       selectedPlayerId: string | "all";
       selectedRound: number | "all";
+      onClose: () => void;
       onPlayerChange: (playerId: string | "all") => void;
       onRoundChange: (round: number | "all") => void;
-      onClose: () => void;
     };
 ```
-
-Use Leaflet imperatively inside the component with `useEffect` and refs. Keep React state as the source of truth. Destroy the Leaflet map on unmount.
 
 ## Styling
 
 Keep the current visual identity:
 
 - Deep green app shell.
-- Off-white surfaces.
-- Gold ball accent.
+- Off-white modal surfaces.
+- Gold ball accents.
 - Fair green.
 - Out clay/red.
 - Compact controls.
 - 8px radius convention.
 
-Add only what the map feature needs:
+Add marker styling:
 
-- A small map icon button on Play.
-- A small map icon button on Results.
-- A clean modal shell for map picker/viewer.
-- Compact dropdown row in the viewer.
-- Marker colors that match the app:
-  - Fair: gold or fair green.
-  - Out: clay/red.
+- Swing marker: small dark-green/off-white swing or simple swing glyph.
+- Current location: blue dot with a soft ring.
+- Selected swing/kick: gold dot.
+- Fair: green/gold marker.
+- Out: clay/red marker.
 
 Avoid:
 
-- New page-level decoration.
-- Duplicate labels.
-- Long explanatory copy.
-- Busy map chrome.
-- Separate map pages unless the modal becomes unusable on mobile.
+- Large explanatory copy.
+- Separate map pages.
+- Duplicate map labels.
+- Busy marker legends.
+- Rotation plugins.
+
+## Persistence Rules
+
+Persist `mapSetup` inside the active game.
+
+Do not persist:
+
+- Setup modal open state.
+- Picker modal open state.
+- Viewer modal open state.
+- Viewer filters.
+- Current blue-dot location.
+- Unsaved selected swing/kick point.
+
+Restore:
+
+- `mapSetup`.
+- `locationMode`.
+- saved kick locations.
+- active game state.
+
+Clear:
+
+- Everything active-game related on explicit Exit.
+- Everything active-game related when starting a brand-new game.
+
+Play Again:
+
+- Starts a fresh game with same players/order/settings.
+- Clears old scores and kick locations.
+- If previous game had location mode and setup, reuse the same setup without asking again.
 
 ## App Logic Changes
 
 ### Start Game
 
-Replace direct start behavior with:
+Update start to:
 
-1. Validate players.
+1. Validate and trim players.
 2. Clear any old active game.
-3. Ask about location mode.
-4. Start the game with the current visible order.
-5. Persist the new active game.
+3. Ask whether to use location.
+4. If no, start immediately with no map setup.
+5. If yes and permission succeeds, open setup.
+6. If setup saves, start with map setup.
+7. If setup cancels or permission fails, start without location.
 
 ### Fair And Out
 
 Update the existing kick handler:
 
 1. Calculate adjusted elapsed time.
-2. Create a `KickEvent` with a stable ID and `location: null`.
+2. Create a `KickEvent` with stable ID and `location: null`.
 3. Add it to `currentTurn.events`.
 4. Apply existing final-out behavior.
-5. If location mode is on, request current location and open the empty picker.
-
-### Bonus And Penalty
-
-Keep existing behavior, but add stable event IDs.
+5. If `locationMode === "on"` and `mapSetup` exists, open picker using setup view.
 
 ### Undo
 
-Update undo to remove the most recent event by array order.
+Keep current undo behavior:
 
-Add two small rules:
+- Remove the most recent event.
+- If removed event is the pending picker event, close picker.
+- If removed event is the final out, restore the turn to paused.
+- Saved kick location disappears because the entire event disappears.
 
-- If the removed event is the open picker event, close the picker.
-- If the removed event is the final out, restore the turn to paused, preserving current elapsed base time.
+### Viewer
 
-### Complete Turn
+Build viewer markers from:
 
-When building a `TurnResult`, copy `events` into the result.
+- `completedTurns`.
+- `currentTurn`.
 
-This keeps completed kick locations available for Results without a second data store.
-
-### Results
-
-Results should behave the same, with one added map button.
+Apply filters after building the full marker list.
 
 ## Code Cleanup Rules
 
-While implementing, actively delete or simplify:
+Actively remove or simplify:
 
-- Any duplicate active-game state.
-- Any helper that exists only to compensate for missing event IDs.
-- Any separate map location store that mirrors `TurnEvent`.
-- Any branch that tries to persist modal UI state.
-- Any old no-location assumptions in `TurnResult`.
+- `lastMapCenter` state.
+- Any fallback that uses the first kick marker as the default viewer center.
+- Any branch that disables location mode because a later blue-dot refresh failed.
+- Any separate swing or marker storage outside `mapSetup` and `TurnEvent.location`.
+- Any map view state that persists independently from active game state.
 
 Keep:
 
 - One source of truth for scoring: `TurnResult[]`.
-- One source of truth for kick locations: `TurnEvent.location`.
-- One source of truth for the current timer: `TurnState`.
+- One source of truth for saved kick locations: `TurnEvent.location`.
+- One source of truth for swing/view setup: `mapSetup`.
 - One reusable map modal.
 
 ## Commenting Style
 
-Match the current app style:
+Match the current code style:
 
 - Types at the top.
 - Constants after types.
@@ -415,24 +401,22 @@ Match the current app style:
 
 Add comments specifically around:
 
-- Restoring a running timer as paused.
-- Persisting only active game state, not modal state.
+- Capturing map center/zoom in setup mode.
+- Showing current location as transient UI state only.
 - Opening the picker after recording the kick.
-- Keeping the timer running while the picker is open.
-- Closing the picker when Undo removes the pending event.
-- Building viewer markers from both results and the current turn.
+- Keeping timer running while the picker is open.
+- Reusing `mapSetup` for picker and viewer.
+- Restoring a running timer as paused.
 
-Do not add comments that restate obvious JSX or CSS declarations.
+Do not add comments that merely describe obvious JSX or CSS declarations.
 
 ## Service Worker
 
 Bump the service worker cache to:
 
 ```ts
-olvidalo-v8
+olvidalo-v9
 ```
-
-This ensures the new JS/CSS and Leaflet assets are refreshed for installed PWA users.
 
 ## Test Plan
 
@@ -446,48 +430,54 @@ git diff --check
 Manual checks:
 
 1. Start a game and decline location.
-2. Confirm Fair/Out do not open maps when location is off.
-3. Start a game and accept location.
-4. Confirm permission success enables location mode.
-5. Confirm permission denial disables location mode.
-6. Press Fair and confirm the timer keeps running while the picker is open.
-7. Dismiss picker and confirm no location is saved.
-8. Press Out, select a map point, and save it.
-9. Undo that Out and confirm the marker disappears.
-10. Record a final Out, save or dismiss location, and confirm the turn ends normally.
-11. Undo final Out and confirm the turn returns to paused.
-12. Open viewer from Play and confirm defaults are current player plus all rounds.
-13. Change Player dropdown to All and confirm visible markers update.
-14. Change Round dropdown and confirm visible markers update.
-15. Complete a game and open viewer from Results.
-16. Confirm Results viewer defaults are all players plus all rounds.
-17. Refresh during a game with the timer running.
-18. Confirm the game restores and the timer is paused.
-19. Refresh on Results.
-20. Confirm Results restores with all scores and saved locations.
-21. Exit from Play and confirm the active game is cleared.
-22. Exit from Results and confirm the active game is cleared.
-23. Play Again and confirm scores and locations reset without reshuffling.
-24. Confirm Longest and Hits leaderboards still match existing scoring rules.
-25. Confirm bonus and penalty events do not create map markers.
+2. Confirm the map button is hidden or disabled.
+3. Confirm Fair/Out do not open maps when location is off.
+4. Start a game and accept location.
+5. Confirm permission denial starts without location.
+6. Confirm permission success opens setup before Play.
+7. Confirm setup shows current location as a blue dot.
+8. Confirm setup Save is disabled until a swing is selected.
+9. Pan/zoom setup, select swing, save, and confirm Play starts.
+10. Press Fair and confirm the picker opens with saved setup view.
+11. Confirm picker shows the swing marker.
+12. Confirm picker shows current location when available.
+13. Confirm timer keeps running while picker is open.
+14. Dismiss picker and confirm no kick location is saved.
+15. Press Out, select a kick point, and save.
+16. Open Play viewer and confirm default filters are current player and all rounds.
+17. Confirm viewer shows swing marker, current location, and saved kick markers.
+18. Change Player and Round filters and confirm markers update.
+19. Undo a located kick and confirm the marker disappears.
+20. Finish a game and open Results viewer.
+21. Confirm Results viewer defaults are all players and all rounds.
+22. Refresh during Play with a running timer.
+23. Confirm the game restores paused and keeps map setup and saved kick locations.
+24. Refresh on Results.
+25. Confirm Results restores scores, map setup, and saved kick locations.
+26. Exit from Play and confirm active game data is cleared.
+27. Exit from Results and confirm active game data is cleared.
+28. Play Again and confirm scores/kicks reset without reshuffling.
+29. If previous game had map setup, confirm Play Again reuses that setup.
+30. Confirm Longest and Hits leaderboards still match existing scoring rules.
+31. Confirm bonus and penalty events do not create map markers.
 
 ## Implementation Order
 
-1. Install Leaflet dependencies.
-2. Add event IDs and `events` to `TurnResult`.
-3. Add active game persistence helpers.
-4. Restore active game on app load.
-5. Update Exit and Play Again to clear or replace saved state.
-6. Add location prompt to Start.
-7. Add kick picker modal.
-8. Add viewer modal and filters.
-9. Add compact map buttons to Play and Results.
-10. Add CSS for map modals and marker controls.
-11. Bump service worker cache.
+1. Update map types in `src/map.ts`.
+2. Add swing and current-location icons.
+3. Update `MapModal` to support setup, picker, and viewer modes.
+4. Replace `lastMapCenter` state with `mapSetup`.
+5. Update active-game read/write validation for `mapSetup`.
+6. Update start flow to open setup before Play.
+7. Update picker to use `mapSetup` view and transient current location.
+8. Update viewer to use `mapSetup` view and transient current location.
+9. Hide or disable map buttons when no `mapSetup` exists.
+10. Update CSS for swing and blue-dot markers.
+11. Bump service worker cache to `olvidalo-v9`.
 12. Run build and diff checks.
 
 ## Suggested Commit Message
 
 ```text
-Add persisted games and kick maps
+Add swing map setup
 ```

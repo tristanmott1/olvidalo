@@ -21,7 +21,7 @@ import {
   useState,
 } from "react";
 import MapModal from "./MapModal";
-import type { KickMarker, LocationPoint } from "./map";
+import type { KickMarker, LocationPoint, MapSetup } from "./map";
 
 type Player = {
   id: string;
@@ -87,12 +87,19 @@ type ActiveGame = {
   currentTurn: TurnState | null;
   completedTurns: TurnResult[];
   locationMode: LocationMode;
-  lastMapCenter: LocationPoint | null;
+  mapSetup: MapSetup | null;
+};
+
+type SetupState = {
+  center: LocationPoint;
+  currentLocation: LocationPoint;
+  selectedSwing: LocationPoint | null;
+  zoom: number;
 };
 
 type PickerState = {
   eventId: string;
-  center: LocationPoint;
+  currentLocation: LocationPoint | null;
   selected: LocationPoint | null;
 };
 
@@ -100,6 +107,7 @@ type ViewerState = {
   source: "play" | "results";
   playerId: string | "all";
   round: number | "all";
+  currentLocation: LocationPoint | null;
 };
 
 type ScoreKey = {
@@ -129,11 +137,7 @@ const DEFAULT_SETTINGS: GameSettings = {
   bonusSeconds: 60,
   penaltySeconds: 15,
 };
-const DEFAULT_MAP_CENTER: LocationPoint = {
-  lat: 39.8283,
-  lng: -98.5795,
-  accuracy: null,
-};
+const DEFAULT_MAP_ZOOM = 17;
 const SCORING_LABELS: Record<ScoringType, string> = {
   longest: "Longest",
   hits: "Hits",
@@ -228,6 +232,35 @@ function readLocation(value: unknown): LocationPoint | null {
     lat,
     lng,
     accuracy: Number.isFinite(accuracy) ? accuracy : null,
+  };
+}
+
+function readMapSetup(value: unknown): MapSetup | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const setup = value as {
+    swing?: unknown;
+    view?: {
+      center?: unknown;
+      zoom?: unknown;
+    };
+  };
+  const swing = readLocation(setup.swing);
+  const center = readLocation(setup.view?.center);
+  const zoom = Number(setup.view?.zoom);
+
+  if (!swing || !center || !Number.isFinite(zoom)) {
+    return null;
+  }
+
+  return {
+    swing,
+    view: {
+      center,
+      zoom,
+    },
   };
 }
 
@@ -387,6 +420,7 @@ function readActiveGame(): ActiveGame | null {
     const completedTurns = Array.isArray(game.completedTurns)
       ? game.completedTurns.map(readTurnResult).filter((result): result is TurnResult => Boolean(result))
       : [];
+    const mapSetup = readMapSetup(game.mapSetup);
 
     if (
       (game.page !== "play" && game.page !== "results") ||
@@ -405,8 +439,8 @@ function readActiveGame(): ActiveGame | null {
       currentRound,
       currentTurn: readTurn(game.currentTurn),
       completedTurns,
-      locationMode: game.locationMode === "on" ? "on" : "off",
-      lastMapCenter: readLocation(game.lastMapCenter),
+      locationMode: game.locationMode === "on" && mapSetup ? "on" : "off",
+      mapSetup,
     };
   } catch {
     return null;
@@ -709,11 +743,12 @@ function App() {
   const [completedTurns, setCompletedTurns] = useState<TurnResult[]>(savedGame?.completedTurns ?? []);
   const [leaderboardTab, setLeaderboardTab] = useState<LeaderboardTab>("overall");
   const [locationMode, setLocationMode] = useState<LocationMode>(savedGame?.locationMode ?? "off");
-  const [lastMapCenter, setLastMapCenter] = useState<LocationPoint | null>(savedGame?.lastMapCenter ?? null);
+  const [mapSetup, setMapSetup] = useState<MapSetup | null>(savedGame?.mapSetup ?? null);
   const [locationPromptOpen, setLocationPromptOpen] = useState(false);
   const [locationRequesting, setLocationRequesting] = useState(false);
   const [locationNotice, setLocationNotice] = useState("");
   const [pendingStartPlayers, setPendingStartPlayers] = useState<Player[]>([]);
+  const [setupState, setSetupState] = useState<SetupState | null>(null);
   const [pickerState, setPickerState] = useState<PickerState | null>(null);
   const [viewerState, setViewerState] = useState<ViewerState | null>(null);
   const [draggingPlayerId, setDraggingPlayerId] = useState<string | null>(null);
@@ -752,7 +787,7 @@ function App() {
       currentTurn: getSavedCurrentTurn(timestamp),
       completedTurns,
       locationMode,
-      lastMapCenter,
+      mapSetup,
     };
 
     localStorage.setItem(ACTIVE_GAME_KEY, JSON.stringify(activeGame));
@@ -777,7 +812,7 @@ function App() {
     currentTurn,
     completedTurns,
     locationMode,
-    lastMapCenter,
+    mapSetup,
   ]);
 
   useEffect(() => {
@@ -857,7 +892,6 @@ function App() {
     () => buildKickMarkers(completedTurns, currentTurn, gamePlayers),
     [completedTurns, currentTurn, gamePlayers],
   );
-  const mapFallbackCenter = lastMapCenter ?? allKickMarkers[0]?.location ?? DEFAULT_MAP_CENTER;
   const visibleKickMarkers = useMemo(
     () => (viewerState ? filterKickMarkers(allKickMarkers, viewerState) : []),
     [allKickMarkers, viewerState],
@@ -934,7 +968,7 @@ function App() {
     setLocationPromptOpen(true);
   }
 
-  function startGame(order: Player[], nextLocationMode: LocationMode, center: LocationPoint | null) {
+  function startGame(order: Player[], nextLocationMode: LocationMode, nextMapSetup: MapSetup | null) {
     const orderedPlayers = order.map((player) => ({
       ...player,
       name: player.name.trim(),
@@ -951,8 +985,9 @@ function App() {
     setCurrentPlayerIndex(0);
     setCurrentTurn(createTurn(orderedPlayers[0].id, 1));
     setLeaderboardTab("overall");
-    setLocationMode(nextLocationMode);
-    setLastMapCenter(center);
+    setLocationMode(nextLocationMode === "on" && nextMapSetup ? "on" : "off");
+    setMapSetup(nextMapSetup);
+    setSetupState(null);
     setPickerState(null);
     setViewerState(null);
     setLocationPromptOpen(false);
@@ -971,7 +1006,14 @@ function App() {
 
     try {
       const center = await requestCurrentLocation();
-      startGame(pendingStartPlayers, "on", center);
+      setLocationPromptOpen(false);
+      setLocationRequesting(false);
+      setSetupState({
+        center,
+        currentLocation: center,
+        selectedSwing: null,
+        zoom: DEFAULT_MAP_ZOOM,
+      });
     } catch {
       setLocationNotice("Location unavailable. Maps are off for this game.");
       startGame(pendingStartPlayers, "off", null);
@@ -979,6 +1021,14 @@ function App() {
   }
 
   function startWithoutLocation() {
+    startGame(pendingStartPlayers, "off", null);
+  }
+
+  function saveMapSetup(nextMapSetup: MapSetup) {
+    startGame(pendingStartPlayers, "on", nextMapSetup);
+  }
+
+  function skipMapSetup() {
     startGame(pendingStartPlayers, "off", null);
   }
 
@@ -992,7 +1042,8 @@ function App() {
     setCurrentTurn(null);
     setLeaderboardTab("overall");
     setLocationMode("off");
-    setLastMapCenter(null);
+    setMapSetup(null);
+    setSetupState(null);
     setPickerState(null);
     setViewerState(null);
     setLocationPromptOpen(false);
@@ -1039,18 +1090,15 @@ function App() {
   async function openPickerForKick(eventId: string) {
     setPickerState({
       eventId,
-      center: lastMapCenter ?? DEFAULT_MAP_CENTER,
+      currentLocation: null,
       selected: null,
     });
 
     try {
-      const center = await requestCurrentLocation();
-      setLastMapCenter(center);
-      setPickerState((state) => (state?.eventId === eventId ? { ...state, center, selected: null } : state));
+      const currentLocation = await requestCurrentLocation();
+      setPickerState((state) => (state?.eventId === eventId ? { ...state, currentLocation } : state));
     } catch {
-      setLocationMode("off");
-      setLocationNotice("Location unavailable. Maps are off for this game.");
-      setPickerState((state) => (state?.eventId === eventId ? null : state));
+      setLocationNotice("Current location unavailable. You can still select a kick location.");
     }
   }
 
@@ -1078,7 +1126,7 @@ function App() {
     setNow(timestamp);
 
     // Location picking happens after the kick is recorded and never pauses the timer.
-    if (currentTurn?.status === "running" && currentPlayer && locationMode === "on") {
+    if (currentTurn?.status === "running" && currentPlayer && locationMode === "on" && mapSetup) {
       void openPickerForKick(eventId);
     }
   }
@@ -1119,24 +1167,44 @@ function App() {
         ),
       };
     });
-    setLastMapCenter(selected);
     setPickerState(null);
   }
 
+  async function refreshViewerLocation(source: ViewerState["source"]) {
+    try {
+      const currentLocation = await requestCurrentLocation();
+      setViewerState((state) => (state?.source === source ? { ...state, currentLocation } : state));
+    } catch {
+      // Current location is only a temporary reference dot; the map still works without it.
+    }
+  }
+
   function openPlayMap() {
+    if (!mapSetup) {
+      return;
+    }
+
     setViewerState({
       source: "play",
       playerId: currentPlayer?.id ?? "all",
       round: "all",
+      currentLocation: null,
     });
+    void refreshViewerLocation("play");
   }
 
   function openResultsMap() {
+    if (!mapSetup) {
+      return;
+    }
+
     setViewerState({
       source: "results",
       playerId: "all",
       round: "all",
+      currentLocation: null,
     });
+    void refreshViewerLocation("results");
   }
 
   function undoLastEvent() {
@@ -1445,10 +1513,12 @@ function App() {
                 <X size={18} />
                 Exit
               </button>
-              <button className="secondary" type="button" onClick={openPlayMap}>
-                <MapIcon size={18} />
-                Map
-              </button>
+              {mapSetup ? (
+                <button className="secondary" type="button" onClick={openPlayMap}>
+                  <MapIcon size={18} />
+                  Map
+                </button>
+              ) : null}
             </div>
 
             {locationNotice ? <p className="notice">{locationNotice}</p> : null}
@@ -1545,14 +1615,16 @@ function App() {
                 <X size={18} />
                 Exit
               </button>
-              <button className="primary" type="button" onClick={() => startGame(gamePlayers, locationMode, lastMapCenter)}>
+              <button className="primary" type="button" onClick={() => startGame(gamePlayers, locationMode, mapSetup)}>
                 <RotateCcw size={18} />
                 Play Again
               </button>
-              <button className="secondary" type="button" onClick={openResultsMap}>
-                <MapIcon size={18} />
-                Map
-              </button>
+              {mapSetup ? (
+                <button className="secondary" type="button" onClick={openResultsMap}>
+                  <MapIcon size={18} />
+                  Map
+                </button>
+              ) : null}
             </div>
 
             <div className="section-heading small">
@@ -1619,20 +1691,34 @@ function App() {
         </div>
       ) : null}
 
-      {pickerState ? (
+      {setupState ? (
         <MapModal
-          center={pickerState.center}
+          center={setupState.center}
+          currentLocation={setupState.currentLocation}
+          mode="setup"
+          onCancel={skipMapSetup}
+          onSave={saveMapSetup}
+          onSelectSwing={(selectedSwing) => setSetupState((state) => (state ? { ...state, selectedSwing } : state))}
+          selectedSwing={setupState.selectedSwing}
+          zoom={setupState.zoom}
+        />
+      ) : null}
+
+      {pickerState && mapSetup ? (
+        <MapModal
+          currentLocation={pickerState.currentLocation}
           mode="picker"
           onCancel={() => setPickerState(null)}
           onSave={savePickerLocation}
           onSelect={(selected) => setPickerState((state) => (state ? { ...state, selected } : state))}
           selected={pickerState.selected}
+          setup={mapSetup}
         />
       ) : null}
 
-      {viewerState ? (
+      {viewerState && mapSetup ? (
         <MapModal
-          fallbackCenter={mapFallbackCenter}
+          currentLocation={viewerState.currentLocation}
           markers={visibleKickMarkers}
           mode="viewer"
           onClose={() => setViewerState(null)}
@@ -1642,6 +1728,7 @@ function App() {
           rounds={settings.rounds}
           selectedPlayerId={viewerState.playerId}
           selectedRound={viewerState.round}
+          setup={mapSetup}
         />
       ) : null}
     </main>

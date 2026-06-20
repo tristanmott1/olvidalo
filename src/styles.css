@@ -637,6 +637,29 @@ button:focus-visible {
   box-shadow: 0 0 0 6px rgba(242, 189, 61, 0.22);
 }
 
+.swing-marker span {
+  background: var(--brand);
+  color: #fffdf7;
+  box-shadow: 0 0 0 6px rgba(18, 63, 56, 0.16);
+}
+
+.current-location-marker {
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(30, 125, 220, 0.16);
+}
+
+.current-location-marker span {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  background: #1f7fe5;
+  box-shadow: 0 0 0 2px rgba(31, 127, 229, 0.32);
+}
+
 .rules-panel {
   gap: 16px;
   position: relative;

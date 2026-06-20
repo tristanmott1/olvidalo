@@ -2,11 +2,14 @@ import L from "leaflet";
 import { X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import {
+  createCurrentLocationIcon,
   createKickIcon,
   createSelectedIcon,
-  fitMarkers,
+  createSwingIcon,
   type KickMarker,
   type LocationPoint,
+  type MapSetup,
+  type MapView,
   toLeafletPoint,
 } from "./map";
 
@@ -18,14 +21,25 @@ type PlayerOption = {
 type MapModalProps =
   | {
       center: LocationPoint;
+      currentLocation: LocationPoint;
+      mode: "setup";
+      onCancel: () => void;
+      onSave: (setup: MapSetup) => void;
+      onSelectSwing: (point: LocationPoint) => void;
+      selectedSwing: LocationPoint | null;
+      zoom: number;
+    }
+  | {
+      currentLocation: LocationPoint | null;
       mode: "picker";
       onCancel: () => void;
       onSave: () => void;
       onSelect: (point: LocationPoint) => void;
       selected: LocationPoint | null;
+      setup: MapSetup;
     }
   | {
-      fallbackCenter: LocationPoint;
+      currentLocation: LocationPoint | null;
       markers: KickMarker[];
       mode: "viewer";
       onClose: () => void;
@@ -35,6 +49,7 @@ type MapModalProps =
       rounds: number;
       selectedPlayerId: string | "all";
       selectedRound: number | "all";
+      setup: MapSetup;
     };
 
 function describeMarker(marker: KickMarker) {
@@ -60,23 +75,47 @@ function formatElapsed(ms: number) {
   return `${sign}${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+function getInitialView(props: MapModalProps): MapView {
+  if (props.mode === "setup") {
+    return { center: props.center, zoom: props.zoom };
+  }
+
+  return props.setup.view;
+}
+
+function getMapView(map: L.Map): MapView {
+  const center = map.getCenter();
+
+  return {
+    center: createPoint(center),
+    zoom: map.getZoom(),
+  };
+}
+
+function getTitle(mode: MapModalProps["mode"]) {
+  if (mode === "setup") {
+    return "Set Swing";
+  }
+
+  return mode === "picker" ? "Kick Location" : "Kick Map";
+}
+
 function MapModal(props: MapModalProps) {
   const mapElementRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const markerLayerRef = useRef<L.LayerGroup | null>(null);
-  const selectedMarkerRef = useRef<L.Marker | null>(null);
-  const onSelectRef = useRef<((point: LocationPoint) => void) | null>(null);
+  const onMapClickRef = useRef<((point: LocationPoint) => void) | null>(null);
 
   useEffect(() => {
     if (!mapElementRef.current || mapRef.current) {
       return undefined;
     }
 
-    const center = props.mode === "picker" ? props.center : props.fallbackCenter;
+    const view = getInitialView(props);
     const map = L.map(mapElementRef.current, {
       attributionControl: true,
       zoomControl: true,
-    }).setView(toLeafletPoint(center), 16);
+    }).setView(toLeafletPoint(view.center), view.zoom);
 
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
@@ -92,82 +131,115 @@ function MapModal(props: MapModalProps) {
       map.remove();
       mapRef.current = null;
       markerLayerRef.current = null;
-      selectedMarkerRef.current = null;
     };
   }, []);
 
   useEffect(() => {
-    onSelectRef.current = props.mode === "picker" ? props.onSelect : null;
+    if (props.mode === "setup") {
+      onMapClickRef.current = props.onSelectSwing;
+      return;
+    }
+
+    onMapClickRef.current = props.mode === "picker" ? props.onSelect : null;
   }, [props]);
 
   useEffect(() => {
     const map = mapRef.current;
 
-    if (!map || props.mode !== "picker") {
+    if (!map) {
       return undefined;
     }
 
-    // The picker records a single point and intentionally shows no old kicks.
     function handleClick(event: L.LeafletMouseEvent) {
-      onSelectRef.current?.(createPoint(event.latlng));
+      onMapClickRef.current?.(createPoint(event.latlng));
     }
 
     map.on("click", handleClick);
-    map.setView(toLeafletPoint(props.center), 16);
 
     return () => {
       map.off("click", handleClick);
     };
-  }, [props.mode, props.mode === "picker" ? props.center.lat : null, props.mode === "picker" ? props.center.lng : null]);
+  }, []);
 
   useEffect(() => {
     const map = mapRef.current;
 
-    if (!map || props.mode !== "picker") {
+    if (!map) {
       return;
     }
 
-    if (selectedMarkerRef.current) {
-      selectedMarkerRef.current.remove();
-      selectedMarkerRef.current = null;
-    }
+    const view = getInitialView(props);
 
-    if (props.selected) {
-      selectedMarkerRef.current = L.marker(toLeafletPoint(props.selected), {
-        icon: createSelectedIcon(),
-      }).addTo(map);
+    // Setup captures user pan/zoom, while picker/viewer reuse the saved setup view.
+    if (props.mode !== "setup") {
+      map.setView(toLeafletPoint(view.center), view.zoom);
     }
-  }, [props]);
+  }, [props.mode]);
 
   useEffect(() => {
-    const map = mapRef.current;
     const markerLayer = markerLayerRef.current;
 
-    if (!map || !markerLayer || props.mode !== "viewer") {
+    if (!markerLayer) {
+      return;
+    }
+
+    markerLayer.clearLayers();
+
+    if (props.mode === "setup") {
+      if (props.currentLocation) {
+        L.marker(toLeafletPoint(props.currentLocation), { icon: createCurrentLocationIcon() }).addTo(markerLayer);
+      }
+
+      if (props.selectedSwing) {
+        L.marker(toLeafletPoint(props.selectedSwing), { icon: createSwingIcon() }).addTo(markerLayer);
+      }
+
+      return;
+    }
+
+    L.marker(toLeafletPoint(props.setup.swing), { icon: createSwingIcon() }).addTo(markerLayer);
+
+    if (props.currentLocation) {
+      L.marker(toLeafletPoint(props.currentLocation), { icon: createCurrentLocationIcon() }).addTo(markerLayer);
+    }
+
+    if (props.mode === "picker") {
+      if (props.selected) {
+        L.marker(toLeafletPoint(props.selected), { icon: createSelectedIcon() }).addTo(markerLayer);
+      }
+
       return;
     }
 
     // Rebuild markers from React state so filtering has one source of truth.
-    markerLayer.clearLayers();
-
     props.markers.forEach((marker) => {
       L.marker(toLeafletPoint(marker.location), { icon: createKickIcon(marker.kind) })
         .bindPopup(`${describeMarker(marker)}<br>${formatElapsed(marker.elapsedMs)}`)
         .addTo(markerLayer);
     });
-
-    fitMarkers(map, props.markers, props.fallbackCenter);
   }, [props]);
+
+  function saveSetup() {
+    if (props.mode !== "setup" || !props.selectedSwing || !mapRef.current) {
+      return;
+    }
+
+    // Save the user's current pan/zoom as the reusable game map orientation.
+    props.onSave({
+      swing: props.selectedSwing,
+      view: getMapView(mapRef.current),
+    });
+  }
 
   return (
     <div className="modal-backdrop">
       <section className="map-modal" role="dialog" aria-modal="true">
         <div className="map-modal-top">
-          <strong>{props.mode === "picker" ? "Kick Location" : "Kick Map"}</strong>
+          <strong>{getTitle(props.mode)}</strong>
           <button
             className="icon-button"
             type="button"
-            onClick={props.mode === "picker" ? props.onCancel : props.onClose}
+            onClick={props.mode === "viewer" ? props.onClose : props.onCancel}
             aria-label="Close map"
           >
             <X size={17} />
@@ -213,12 +285,17 @@ function MapModal(props: MapModalProps) {
           <p className="map-empty">No saved kick locations.</p>
         ) : null}
 
-        {props.mode === "picker" ? (
+        {props.mode !== "viewer" ? (
           <div className="map-actions">
             <button className="secondary" type="button" onClick={props.onCancel}>
-              Dismiss
+              {props.mode === "setup" ? "Skip" : "Dismiss"}
             </button>
-            <button className="primary" type="button" onClick={props.onSave} disabled={!props.selected}>
+            <button
+              className="primary"
+              type="button"
+              onClick={props.mode === "setup" ? saveSetup : props.onSave}
+              disabled={props.mode === "setup" ? !props.selectedSwing : !props.selected}
+            >
               Save
             </button>
           </div>

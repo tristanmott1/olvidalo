@@ -6,6 +6,16 @@ export type LocationPoint = {
   accuracy: number | null;
 };
 
+export type MapView = {
+  center: LocationPoint;
+  zoom: number;
+};
+
+export type MapSetup = {
+  swing: LocationPoint;
+  view: MapView;
+};
+
 export type KickMarker = {
   id: string;
   kind: "fair" | "out";
@@ -38,12 +48,20 @@ export function createSelectedIcon() {
   });
 }
 
-export function fitMarkers(map: L.Map, markers: KickMarker[], fallbackCenter: LocationPoint) {
-  if (markers.length === 0) {
-    map.setView(toLeafletPoint(fallbackCenter), 16);
-    return;
-  }
+export function createSwingIcon() {
+  return L.divIcon({
+    className: "kick-marker swing-marker",
+    html: "<span>S</span>",
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
+  });
+}
 
-  const bounds = L.latLngBounds(markers.map((marker) => toLeafletPoint(marker.location)));
-  map.fitBounds(bounds, { maxZoom: 18, padding: [28, 28] });
+export function createCurrentLocationIcon() {
+  return L.divIcon({
+    className: "current-location-marker",
+    html: "<span></span>",
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+  });
 }
