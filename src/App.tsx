@@ -2,6 +2,7 @@ import {
   ArrowDown,
   ArrowUp,
   GripVertical,
+  Info,
   Pause,
   Play,
   Plus,
@@ -25,7 +26,7 @@ type Player = {
   outLimit: number;
 };
 
-type Page = "home" | "play" | "results";
+type Page = "home" | "play" | "results" | "rules";
 type HitKind = "fair" | "out";
 type ScoringType = "longest" | "hits";
 type RoundScoring = "cumulative" | "best";
@@ -92,6 +93,18 @@ const ROUND_SCORING_LABELS: Record<RoundScoring, string> = {
   best: "Best",
   cumulative: "Cumulative",
 };
+const RULES = [
+  "The goal of the game is to stay on the swing for the longest amount of time. Every player not on the swing is considered an outfielder, and is playing as if on the same team. They should try to get the ball back to the pitcher as quickly as possible, so as to get more pitches and outs.",
+  "The swinger's time stops when the outfielders (including pitcher) catch the live ball the specified number of times.",
+  "The ball is still live if it is moving, and not on a surface that is considered the ground (eg. bouncing down through the branches of a tree), and can be caught for an out.",
+  "If the ball gets stuck somewhere difficult, time continues. The outfielders must retrieve the ball and keep playing if they want the swinger to get out.",
+  "If the ball is impossible to retrieve, the swinger wins by default.",
+  "The pitcher must give the swinger the best opportunities for kicking possible.",
+  "The swinger must give their best effort to kick the ball - full leg extension, top of foot, no bunting, or overtly side-of-foot kicks. Warnings and time penalties can be given by the pitcher.",
+  "If a pitch that is clearly above the shin results in an out, the out does not count (bad pitch).",
+  "The swinger can try to kick the pitcher and a dead ball if they come within the vicinity of the swing's arc.",
+  "The best kind of ball is one that is about soccer ball sized that is a soft rubber, has enough weight to go far, but would not hurt excessively if hit in the face.",
+];
 
 function createId() {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -689,6 +702,11 @@ function App() {
           <img src="./icon.svg" alt="" className="brand-mark" />
           <strong>Olvídalo</strong>
         </div>
+        {page === "home" ? (
+          <button className="info-button" type="button" onClick={() => setPage("rules")} aria-label="Rules">
+            <Info size={19} />
+          </button>
+        ) : null}
       </header>
 
       {page === "home" ? (
@@ -953,6 +971,29 @@ function App() {
               />
             </section>
           ))}
+        </div>
+      ) : null}
+
+      {page === "rules" ? (
+        <div className="page-stack">
+          <section className="section-panel rules-panel">
+            <div className="top-actions">
+              <button className="secondary" type="button" onClick={() => setPage("home")}>
+                <X size={18} />
+                Back
+              </button>
+            </div>
+
+            <div className="section-heading small">
+              <h1>Rules</h1>
+            </div>
+
+            <ol className="rules-list">
+              {RULES.map((rule) => (
+                <li key={rule}>{rule}</li>
+              ))}
+            </ol>
+          </section>
         </div>
       ) : null}
     </main>

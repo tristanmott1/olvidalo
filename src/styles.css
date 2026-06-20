@@ -110,6 +110,18 @@ button:focus-visible {
   line-height: 1;
 }
 
+.info-button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(18, 63, 56, 0.12);
+  border-radius: 999px;
+  background: #fff0bd;
+  color: var(--brand);
+  box-shadow: inset 0 -2px 0 rgba(75, 53, 8, 0.08);
+}
+
 .page-stack {
   display: grid;
   gap: 12px;
@@ -475,6 +487,29 @@ button:focus-visible {
   color: var(--muted);
   font-weight: 700;
   text-align: center;
+}
+
+.rules-panel {
+  gap: 16px;
+}
+
+.rules-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding-left: 22px;
+}
+
+.rules-list li {
+  padding-left: 4px;
+  color: var(--ink);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.rules-list li::marker {
+  color: var(--brand);
+  font-weight: 900;
 }
 
 @media (max-width: 520px) {
