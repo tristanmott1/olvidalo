@@ -1,4 +1,4 @@
-const CACHE_NAME = "olvidalo-v7";
+const CACHE_NAME = "olvidalo-v8";
 const CORE_ASSETS = [
   "./",
   "./index.html",

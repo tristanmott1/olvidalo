@@ -513,6 +513,130 @@ button:focus-visible {
   text-align: center;
 }
 
+.notice {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(212, 161, 57, 0.36);
+  border-radius: 8px;
+  background: #fff7df;
+  color: #5d430e;
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  background: rgba(10, 30, 26, 0.54);
+}
+
+.choice-modal,
+.map-modal {
+  width: min(100%, 680px);
+  border: 1px solid rgba(220, 229, 218, 0.82);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 24px 70px rgba(10, 30, 26, 0.28);
+}
+
+.choice-modal {
+  display: grid;
+  gap: 10px;
+  max-width: 420px;
+  padding: 16px;
+}
+
+.choice-modal strong,
+.map-modal-top strong {
+  color: var(--brand);
+  font-size: 1.1rem;
+}
+
+.choice-modal p {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 750;
+}
+
+.map-modal {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.map-modal-top,
+.map-actions,
+.map-filters {
+  display: flex;
+  gap: 8px;
+}
+
+.map-modal-top {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.map-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.map-surface {
+  min-height: 420px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+}
+
+.map-actions {
+  justify-content: flex-end;
+}
+
+.map-empty {
+  margin: -2px 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.kick-marker {
+  display: grid;
+  place-items: center;
+  border: 2px solid #fffdf7;
+  border-radius: 999px;
+  color: #ffffff;
+  font-size: 0.72rem;
+  font-weight: 950;
+  box-shadow: 0 5px 14px rgba(18, 63, 56, 0.24);
+}
+
+.kick-marker span {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+}
+
+.fair-marker span {
+  background: var(--fair);
+}
+
+.out-marker span {
+  background: var(--out);
+}
+
+.selected-marker span {
+  background: var(--ball);
+  box-shadow: 0 0 0 6px rgba(242, 189, 61, 0.22);
+}
+
 .rules-panel {
   gap: 16px;
   position: relative;
@@ -661,6 +785,19 @@ button:focus-visible {
 
   .time-settings {
     grid-template-columns: 1fr;
+  }
+
+  .map-filters,
+  .map-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .map-actions {
+    display: grid;
+  }
+
+  .map-surface {
+    min-height: 360px;
   }
 
   .leader-row {

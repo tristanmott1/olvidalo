@@ -2,6 +2,7 @@ import {
   ArrowDown,
   GripVertical,
   Info,
+  Map as MapIcon,
   Pause,
   Play,
   Plus,
@@ -19,6 +20,8 @@ import {
   useRef,
   useState,
 } from "react";
+import MapModal from "./MapModal";
+import type { KickMarker, LocationPoint } from "./map";
 
 type Player = {
   id: string;
@@ -33,6 +36,7 @@ type ScoringType = "longest" | "hits";
 type RoundScoring = "cumulative" | "best";
 type TimerStatus = "idle" | "running" | "paused" | "done";
 type LeaderboardTab = "overall" | "current";
+type LocationMode = "off" | "on";
 
 type GameSettings = {
   rounds: number;
@@ -44,10 +48,13 @@ type GameSettings = {
 
 type TurnEvent =
   | {
+      id: string;
       kind: HitKind;
       elapsedMs: number;
+      location: LocationPoint | null;
     }
   | {
+      id: string;
       kind: AdjustmentKind;
       elapsedMs: number;
       deltaMs: number;
@@ -68,6 +75,31 @@ type TurnResult = {
   elapsedMs: number;
   fairHits: number;
   outHits: number;
+  events: TurnEvent[];
+};
+
+type ActiveGame = {
+  page: "play" | "results";
+  players: Player[];
+  settings: GameSettings;
+  currentPlayerIndex: number;
+  currentRound: number;
+  currentTurn: TurnState | null;
+  completedTurns: TurnResult[];
+  locationMode: LocationMode;
+  lastMapCenter: LocationPoint | null;
+};
+
+type PickerState = {
+  eventId: string;
+  center: LocationPoint;
+  selected: LocationPoint | null;
+};
+
+type ViewerState = {
+  source: "play" | "results";
+  playerId: string | "all";
+  round: number | "all";
 };
 
 type ScoreKey = {
@@ -86,6 +118,7 @@ type LeaderboardEntry = {
 
 const PLAYERS_KEY = "olvidalo.players.v1";
 const SETTINGS_KEY = "olvidalo.settings.v1";
+const ACTIVE_GAME_KEY = "olvidalo.activeGame.v1";
 const DEFAULT_OUT_LIMIT = 2;
 const OUT_LIMIT_OPTIONS = [1, 2, 3, 4, 5] as const;
 const ROUND_OPTIONS = [1, 2, 3, 4, 5] as const;
@@ -95,6 +128,11 @@ const DEFAULT_SETTINGS: GameSettings = {
   roundScoring: "best",
   bonusSeconds: 60,
   penaltySeconds: 15,
+};
+const DEFAULT_MAP_CENTER: LocationPoint = {
+  lat: 39.8283,
+  lng: -98.5795,
+  accuracy: null,
 };
 const SCORING_LABELS: Record<ScoringType, string> = {
   longest: "Longest",
@@ -172,6 +210,209 @@ function readStoredSettings(): GameSettings {
   }
 }
 
+function readLocation(value: unknown): LocationPoint | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const point = value as Partial<LocationPoint>;
+  const lat = Number(point.lat);
+  const lng = Number(point.lng);
+  const accuracy = point.accuracy === null ? null : Number(point.accuracy);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return null;
+  }
+
+  return {
+    lat,
+    lng,
+    accuracy: Number.isFinite(accuracy) ? accuracy : null,
+  };
+}
+
+function readTurnEvent(value: unknown): TurnEvent | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const event = value as {
+    deltaMs?: unknown;
+    elapsedMs?: unknown;
+    id?: unknown;
+    kind?: unknown;
+    location?: unknown;
+  };
+  const elapsedMs = Number(event.elapsedMs);
+
+  if (!Number.isFinite(elapsedMs)) {
+    return null;
+  }
+
+  if (event.kind === "fair" || event.kind === "out") {
+    return {
+      id: typeof event.id === "string" ? event.id : createId(),
+      kind: event.kind,
+      elapsedMs,
+      location: readLocation(event.location),
+    };
+  }
+
+  if (event.kind === "bonus" || event.kind === "penalty") {
+    const deltaMs = Number(event.deltaMs);
+
+    if (!Number.isFinite(deltaMs)) {
+      return null;
+    }
+
+    return {
+      id: typeof event.id === "string" ? event.id : createId(),
+      kind: event.kind,
+      elapsedMs,
+      deltaMs,
+    };
+  }
+
+  return null;
+}
+
+function readTurn(value: unknown): TurnState | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const turn = value as {
+    elapsedMs?: unknown;
+    events?: unknown;
+    playerId?: unknown;
+    round?: unknown;
+    status?: unknown;
+  };
+  const elapsedMs = Number(turn.elapsedMs);
+  const round = Number(turn.round);
+  const events = Array.isArray(turn.events)
+    ? turn.events.map(readTurnEvent).filter((event): event is TurnEvent => Boolean(event))
+    : [];
+
+  if (typeof turn.playerId !== "string" || !Number.isFinite(round) || !Number.isFinite(elapsedMs)) {
+    return null;
+  }
+
+  const status = turn.status === "done" || turn.status === "paused" || turn.status === "idle"
+    ? turn.status
+    : "paused";
+
+  return {
+    playerId: turn.playerId,
+    round,
+    // A restored running timer always reopens paused so closing the app never adds surprise time.
+    status,
+    startedAt: null,
+    elapsedMs,
+    events,
+  };
+}
+
+function readTurnResult(value: unknown): TurnResult | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const result = value as {
+    elapsedMs?: unknown;
+    events?: unknown;
+    fairHits?: unknown;
+    outHits?: unknown;
+    playerId?: unknown;
+    round?: unknown;
+  };
+  const elapsedMs = Number(result.elapsedMs);
+  const fairHits = Number(result.fairHits);
+  const outHits = Number(result.outHits);
+  const round = Number(result.round);
+  const events = Array.isArray(result.events)
+    ? result.events.map(readTurnEvent).filter((event): event is TurnEvent => Boolean(event))
+    : [];
+
+  if (
+    typeof result.playerId !== "string" ||
+    !Number.isFinite(round) ||
+    !Number.isFinite(elapsedMs) ||
+    !Number.isFinite(fairHits) ||
+    !Number.isFinite(outHits)
+  ) {
+    return null;
+  }
+
+  return {
+    playerId: result.playerId,
+    round,
+    elapsedMs,
+    fairHits,
+    outHits,
+    events,
+  };
+}
+
+function readActiveGame(): ActiveGame | null {
+  try {
+    const raw = localStorage.getItem(ACTIVE_GAME_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+
+    const game = parsed as Partial<ActiveGame>;
+    const players = Array.isArray(game.players)
+      ? game.players
+          .map((player) => ({
+            id: typeof player.id === "string" ? player.id : createId(),
+            name: typeof player.name === "string" ? player.name : "",
+            outLimit: clampChoice(Number(player.outLimit), OUT_LIMIT_OPTIONS, DEFAULT_OUT_LIMIT),
+          }))
+          .filter((player) => player.name.trim().length > 0)
+      : [];
+    const settings: GameSettings = game.settings
+      ? {
+          rounds: clampChoice(Number(game.settings.rounds), ROUND_OPTIONS, DEFAULT_SETTINGS.rounds),
+          scoringType: game.settings.scoringType === "hits" ? "hits" : "longest",
+          roundScoring: game.settings.roundScoring === "cumulative" ? "cumulative" : "best",
+          bonusSeconds: readSeconds(game.settings.bonusSeconds, DEFAULT_SETTINGS.bonusSeconds),
+          penaltySeconds: readSeconds(game.settings.penaltySeconds, DEFAULT_SETTINGS.penaltySeconds),
+        }
+      : DEFAULT_SETTINGS;
+    const currentPlayerIndex = Number(game.currentPlayerIndex);
+    const currentRound = Number(game.currentRound);
+    const completedTurns = Array.isArray(game.completedTurns)
+      ? game.completedTurns.map(readTurnResult).filter((result): result is TurnResult => Boolean(result))
+      : [];
+
+    if (
+      (game.page !== "play" && game.page !== "results") ||
+      players.length === 0 ||
+      !Number.isFinite(currentPlayerIndex) ||
+      !Number.isFinite(currentRound)
+    ) {
+      return null;
+    }
+
+    return {
+      page: game.page,
+      players,
+      settings,
+      currentPlayerIndex,
+      currentRound,
+      currentTurn: readTurn(game.currentTurn),
+      completedTurns,
+      locationMode: game.locationMode === "on" ? "on" : "off",
+      lastMapCenter: readLocation(game.lastMapCenter),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function shufflePlayers(players: Player[]) {
   const shuffled = [...players];
 
@@ -239,6 +480,7 @@ function toTurnResult(turn: TurnState, now: number): TurnResult {
     elapsedMs: getTurnElapsedMs(turn, now),
     fairHits: counts.fair,
     outHits: counts.out,
+    events: turn.events,
   };
 }
 
@@ -377,21 +619,144 @@ function getSubScoreLabel(entry: LeaderboardEntry, settings: GameSettings) {
   return `${otherScore} / ${entry.outHits} out`;
 }
 
+function toLocationPoint(position: GeolocationPosition): LocationPoint {
+  return {
+    lat: position.coords.latitude,
+    lng: position.coords.longitude,
+    accuracy: Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null,
+  };
+}
+
+function requestCurrentLocation() {
+  return new Promise<LocationPoint>((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error("Location unavailable"));
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => resolve(toLocationPoint(position)),
+      reject,
+      {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 10000,
+      },
+    );
+  });
+}
+
+function buildKickMarkers(results: TurnResult[], currentTurn: TurnState | null, players: Player[]): KickMarker[] {
+  const playerNames = new Map(players.map((player) => [player.id, player.name]));
+  const turns = [
+    ...results.map((result) => ({
+      playerId: result.playerId,
+      round: result.round,
+      events: result.events,
+    })),
+    ...(currentTurn
+      ? [{
+          playerId: currentTurn.playerId,
+          round: currentTurn.round,
+          events: currentTurn.events,
+        }]
+      : []),
+  ];
+
+  return turns.flatMap((turn) => {
+    const markers: KickMarker[] = [];
+
+    // Only located Fair and Out events become map markers.
+    turn.events.forEach((event) => {
+      if ((event.kind === "fair" || event.kind === "out") && event.location) {
+        markers.push({
+          id: `${turn.playerId}-${turn.round}-${event.id}`,
+          kind: event.kind,
+          playerId: turn.playerId,
+          playerName: playerNames.get(turn.playerId) ?? "Player",
+          round: turn.round,
+          elapsedMs: event.elapsedMs,
+          location: event.location,
+        });
+      }
+    });
+
+    return markers;
+  });
+}
+
+function filterKickMarkers(markers: KickMarker[], viewer: ViewerState) {
+  return markers.filter((marker) => {
+    const playerMatches = viewer.playerId === "all" || marker.playerId === viewer.playerId;
+    const roundMatches = viewer.round === "all" || marker.round === viewer.round;
+
+    return playerMatches && roundMatches;
+  });
+}
+
 function App() {
-  const [page, setPage] = useState<Page>("home");
-  const [players, setPlayers] = useState<Player[]>(readStoredPlayers);
-  const [settings, setSettings] = useState<GameSettings>(readStoredSettings);
+  const savedGameRef = useRef<ActiveGame | null>(readActiveGame());
+  const savedGame = savedGameRef.current;
+  const [page, setPage] = useState<Page>(savedGame?.page ?? "home");
+  const [players, setPlayers] = useState<Player[]>(savedGame?.players ?? readStoredPlayers);
+  const [settings, setSettings] = useState<GameSettings>(savedGame?.settings ?? readStoredSettings);
   const [draftName, setDraftName] = useState("");
   const [draftOutLimit, setDraftOutLimit] = useState(DEFAULT_OUT_LIMIT);
-  const [gamePlayers, setGamePlayers] = useState<Player[]>([]);
-  const [currentRound, setCurrentRound] = useState(1);
-  const [currentPlayerIndex, setCurrentPlayerIndex] = useState(0);
-  const [currentTurn, setCurrentTurn] = useState<TurnState | null>(null);
-  const [completedTurns, setCompletedTurns] = useState<TurnResult[]>([]);
+  const [gamePlayers, setGamePlayers] = useState<Player[]>(savedGame?.players ?? []);
+  const [currentRound, setCurrentRound] = useState(savedGame?.currentRound ?? 1);
+  const [currentPlayerIndex, setCurrentPlayerIndex] = useState(savedGame?.currentPlayerIndex ?? 0);
+  const [currentTurn, setCurrentTurn] = useState<TurnState | null>(savedGame?.currentTurn ?? null);
+  const [completedTurns, setCompletedTurns] = useState<TurnResult[]>(savedGame?.completedTurns ?? []);
   const [leaderboardTab, setLeaderboardTab] = useState<LeaderboardTab>("overall");
+  const [locationMode, setLocationMode] = useState<LocationMode>(savedGame?.locationMode ?? "off");
+  const [lastMapCenter, setLastMapCenter] = useState<LocationPoint | null>(savedGame?.lastMapCenter ?? null);
+  const [locationPromptOpen, setLocationPromptOpen] = useState(false);
+  const [locationRequesting, setLocationRequesting] = useState(false);
+  const [locationNotice, setLocationNotice] = useState("");
+  const [pendingStartPlayers, setPendingStartPlayers] = useState<Player[]>([]);
+  const [pickerState, setPickerState] = useState<PickerState | null>(null);
+  const [viewerState, setViewerState] = useState<ViewerState | null>(null);
   const [draggingPlayerId, setDraggingPlayerId] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const draftNameInputRef = useRef<HTMLInputElement>(null);
+
+  function getSavedCurrentTurn(timestamp: number) {
+    if (!currentTurn) {
+      return null;
+    }
+
+    if (currentTurn.status !== "running") {
+      return currentTurn;
+    }
+
+    return {
+      ...currentTurn,
+      // Save a running timer as paused at the visible time so reopening never adds surprise time.
+      elapsedMs: getTurnBaseElapsedMs(currentTurn, timestamp),
+      startedAt: null,
+      status: "paused" as const,
+    };
+  }
+
+  function saveActiveGame(timestamp = Date.now()) {
+    if (page !== "play" && page !== "results") {
+      return;
+    }
+
+    const activeGame: ActiveGame = {
+      page,
+      players: gamePlayers,
+      settings,
+      currentPlayerIndex,
+      currentRound,
+      currentTurn: getSavedCurrentTurn(timestamp),
+      completedTurns,
+      locationMode,
+      lastMapCenter,
+    };
+
+    localStorage.setItem(ACTIVE_GAME_KEY, JSON.stringify(activeGame));
+  }
 
   useEffect(() => {
     localStorage.setItem(PLAYERS_KEY, JSON.stringify(players));
@@ -400,6 +765,34 @@ function App() {
   useEffect(() => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
+
+  useEffect(() => {
+    saveActiveGame();
+  }, [
+    page,
+    gamePlayers,
+    settings,
+    currentPlayerIndex,
+    currentRound,
+    currentTurn,
+    completedTurns,
+    locationMode,
+    lastMapCenter,
+  ]);
+
+  useEffect(() => {
+    function saveBeforeClose() {
+      saveActiveGame();
+    }
+
+    window.addEventListener("pagehide", saveBeforeClose);
+    document.addEventListener("visibilitychange", saveBeforeClose);
+
+    return () => {
+      window.removeEventListener("pagehide", saveBeforeClose);
+      document.removeEventListener("visibilitychange", saveBeforeClose);
+    };
+  });
 
   useEffect(() => {
     if (currentTurn?.status !== "running") {
@@ -460,6 +853,15 @@ function App() {
     () => buildLeaderboard(scoredTurns.filter((result) => result.round === currentRound), gamePlayers, settings),
     [scoredTurns, currentRound, gamePlayers, settings],
   );
+  const allKickMarkers = useMemo(
+    () => buildKickMarkers(completedTurns, currentTurn, gamePlayers),
+    [completedTurns, currentTurn, gamePlayers],
+  );
+  const mapFallbackCenter = lastMapCenter ?? allKickMarkers[0]?.location ?? DEFAULT_MAP_CENTER;
+  const visibleKickMarkers = useMemo(
+    () => (viewerState ? filterKickMarkers(allKickMarkers, viewerState) : []),
+    [allKickMarkers, viewerState],
+  );
   const onDeckPlayers = getOnDeckPlayers(gamePlayers, currentRound, currentPlayerIndex, settings.rounds);
   const canStart = players.length > 0 && players.every((player) => player.name.trim().length > 0);
   const roundScoring = effectiveRoundScoring(settings);
@@ -516,7 +918,23 @@ function App() {
     setDraggingPlayerId(playerId);
   }
 
-  function startGame(order: Player[]) {
+  function prepareStartGame(order: Player[]) {
+    const orderedPlayers = order.map((player) => ({
+      ...player,
+      name: player.name.trim(),
+    }));
+
+    if (orderedPlayers.length === 0) {
+      return;
+    }
+
+    localStorage.removeItem(ACTIVE_GAME_KEY);
+    setLocationNotice("");
+    setPendingStartPlayers(orderedPlayers);
+    setLocationPromptOpen(true);
+  }
+
+  function startGame(order: Player[], nextLocationMode: LocationMode, center: LocationPoint | null) {
     const orderedPlayers = order.map((player) => ({
       ...player,
       name: player.name.trim(),
@@ -533,11 +951,39 @@ function App() {
     setCurrentPlayerIndex(0);
     setCurrentTurn(createTurn(orderedPlayers[0].id, 1));
     setLeaderboardTab("overall");
+    setLocationMode(nextLocationMode);
+    setLastMapCenter(center);
+    setPickerState(null);
+    setViewerState(null);
+    setLocationPromptOpen(false);
+    setLocationRequesting(false);
+    setPendingStartPlayers([]);
     setPage("play");
     setNow(Date.now());
   }
 
+  async function startWithLocation() {
+    if (locationRequesting) {
+      return;
+    }
+
+    setLocationRequesting(true);
+
+    try {
+      const center = await requestCurrentLocation();
+      startGame(pendingStartPlayers, "on", center);
+    } catch {
+      setLocationNotice("Location unavailable. Maps are off for this game.");
+      startGame(pendingStartPlayers, "off", null);
+    }
+  }
+
+  function startWithoutLocation() {
+    startGame(pendingStartPlayers, "off", null);
+  }
+
   function exitToHome() {
+    localStorage.removeItem(ACTIVE_GAME_KEY);
     setPage("home");
     setGamePlayers([]);
     setCompletedTurns([]);
@@ -545,6 +991,14 @@ function App() {
     setCurrentPlayerIndex(0);
     setCurrentTurn(null);
     setLeaderboardTab("overall");
+    setLocationMode("off");
+    setLastMapCenter(null);
+    setPickerState(null);
+    setViewerState(null);
+    setLocationPromptOpen(false);
+    setLocationRequesting(false);
+    setPendingStartPlayers([]);
+    setLocationNotice("");
   }
 
   function startTurn() {
@@ -582,8 +1036,27 @@ function App() {
     setNow(Date.now());
   }
 
+  async function openPickerForKick(eventId: string) {
+    setPickerState({
+      eventId,
+      center: lastMapCenter ?? DEFAULT_MAP_CENTER,
+      selected: null,
+    });
+
+    try {
+      const center = await requestCurrentLocation();
+      setLastMapCenter(center);
+      setPickerState((state) => (state?.eventId === eventId ? { ...state, center, selected: null } : state));
+    } catch {
+      setLocationMode("off");
+      setLocationNotice("Location unavailable. Maps are off for this game.");
+      setPickerState((state) => (state?.eventId === eventId ? null : state));
+    }
+  }
+
   function recordHit(kind: HitKind) {
     const timestamp = Date.now();
+    const eventId = createId();
 
     setCurrentTurn((turn) => {
       if (!turn || turn.status !== "running" || !currentPlayer) {
@@ -592,7 +1065,7 @@ function App() {
 
       const baseElapsedMs = getTurnBaseElapsedMs(turn, timestamp);
       const elapsedMs = baseElapsedMs + getAdjustmentMs(turn.events);
-      const events = [...turn.events, { kind, elapsedMs }];
+      const events = [...turn.events, { id: eventId, kind, elapsedMs, location: null }];
       const outs = countHits(events).out;
 
       // Freeze the base clock when the final out lands; adjustments stay event-derived.
@@ -603,6 +1076,11 @@ function App() {
       return { ...turn, events };
     });
     setNow(timestamp);
+
+    // Location picking happens after the kick is recorded and never pauses the timer.
+    if (currentTurn?.status === "running" && currentPlayer && locationMode === "on") {
+      void openPickerForKick(eventId);
+    }
   }
 
   function recordAdjustment(kind: AdjustmentKind) {
@@ -615,12 +1093,59 @@ function App() {
       }
 
       const elapsedMs = getTurnBaseElapsedMs(turn, timestamp) + getAdjustmentMs(turn.events) + deltaMs;
-      return { ...turn, events: [...turn.events, { kind, elapsedMs, deltaMs }] };
+      return { ...turn, events: [...turn.events, { id: createId(), kind, elapsedMs, deltaMs }] };
     });
     setNow(timestamp);
   }
 
+  function savePickerLocation() {
+    if (!pickerState?.selected) {
+      return;
+    }
+
+    const { eventId, selected } = pickerState;
+
+    setCurrentTurn((turn) => {
+      if (!turn) {
+        return turn;
+      }
+
+      return {
+        ...turn,
+        events: turn.events.map((event) =>
+          event.id === eventId && (event.kind === "fair" || event.kind === "out")
+            ? { ...event, location: selected }
+            : event,
+        ),
+      };
+    });
+    setLastMapCenter(selected);
+    setPickerState(null);
+  }
+
+  function openPlayMap() {
+    setViewerState({
+      source: "play",
+      playerId: currentPlayer?.id ?? "all",
+      round: "all",
+    });
+  }
+
+  function openResultsMap() {
+    setViewerState({
+      source: "results",
+      playerId: "all",
+      round: "all",
+    });
+  }
+
   function undoLastEvent() {
+    const removedEventId = currentTurn?.events.at(-1)?.id ?? null;
+
+    if (pickerState?.eventId === removedEventId) {
+      setPickerState(null);
+    }
+
     setCurrentTurn((turn) => {
       if (!turn || turn.events.length === 0) {
         return turn;
@@ -900,7 +1425,12 @@ function App() {
               </div>
             </div>
 
-            <button className="primary wide-button" type="button" onClick={() => startGame(players)} disabled={!canStart}>
+            <button
+              className="primary wide-button"
+              type="button"
+              onClick={() => prepareStartGame(players)}
+              disabled={!canStart}
+            >
               Start
             </button>
           </section>
@@ -915,7 +1445,13 @@ function App() {
                 <X size={18} />
                 Exit
               </button>
+              <button className="secondary" type="button" onClick={openPlayMap}>
+                <MapIcon size={18} />
+                Map
+              </button>
             </div>
+
+            {locationNotice ? <p className="notice">{locationNotice}</p> : null}
 
             <div className="status-row">
               <span>
@@ -1009,9 +1545,13 @@ function App() {
                 <X size={18} />
                 Exit
               </button>
-              <button className="primary" type="button" onClick={() => startGame(gamePlayers)}>
+              <button className="primary" type="button" onClick={() => startGame(gamePlayers, locationMode, lastMapCenter)}>
                 <RotateCcw size={18} />
                 Play Again
+              </button>
+              <button className="secondary" type="button" onClick={openResultsMap}>
+                <MapIcon size={18} />
+                Map
               </button>
             </div>
 
@@ -1060,6 +1600,49 @@ function App() {
             </ol>
           </section>
         </div>
+      ) : null}
+
+      {locationPromptOpen ? (
+        <div className="modal-backdrop">
+          <section className="choice-modal" role="dialog" aria-modal="true">
+            <strong>Use location for this game?</strong>
+            <p>Fair and Out kicks can be saved to a map.</p>
+            <div className="map-actions">
+              <button className="secondary" type="button" onClick={startWithoutLocation} disabled={locationRequesting}>
+                Not Now
+              </button>
+              <button className="primary" type="button" onClick={startWithLocation} disabled={locationRequesting}>
+                {locationRequesting ? "Connecting" : "Use Location"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {pickerState ? (
+        <MapModal
+          center={pickerState.center}
+          mode="picker"
+          onCancel={() => setPickerState(null)}
+          onSave={savePickerLocation}
+          onSelect={(selected) => setPickerState((state) => (state ? { ...state, selected } : state))}
+          selected={pickerState.selected}
+        />
+      ) : null}
+
+      {viewerState ? (
+        <MapModal
+          fallbackCenter={mapFallbackCenter}
+          markers={visibleKickMarkers}
+          mode="viewer"
+          onClose={() => setViewerState(null)}
+          onPlayerChange={(playerId) => setViewerState((state) => (state ? { ...state, playerId } : state))}
+          onRoundChange={(round) => setViewerState((state) => (state ? { ...state, round } : state))}
+          players={gamePlayers}
+          rounds={settings.rounds}
+          selectedPlayerId={viewerState.playerId}
+          selectedRound={viewerState.round}
+        />
       ) : null}
     </main>
   );
