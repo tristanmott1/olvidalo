@@ -149,6 +149,10 @@ button:focus-visible {
   gap: 10px;
 }
 
+.section-heading {
+  flex-wrap: wrap;
+}
+
 .section-heading.small {
   margin-bottom: -2px;
 }
@@ -179,6 +183,13 @@ button:focus-visible {
   align-items: stretch;
 }
 
+.heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .field {
   display: grid;
   gap: 6px;
@@ -205,7 +216,7 @@ button:focus-visible {
 
 .player-row {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) 66px auto;
+  grid-template-columns: 34px minmax(0, 1fr) 66px 34px;
   gap: 8px;
   align-items: center;
   padding: 8px;
@@ -217,12 +228,6 @@ button:focus-visible {
 .player-row.dragging {
   border-color: var(--brand-bright);
   box-shadow: 0 0 0 3px rgba(31, 109, 97, 0.12);
-}
-
-.row-actions {
-  display: grid;
-  grid-template-columns: repeat(3, 34px);
-  gap: 4px;
 }
 
 .drag-handle,
@@ -253,6 +258,10 @@ button:focus-visible {
 }
 
 .icon-button.danger {
+  color: var(--out);
+}
+
+.danger-button {
   color: var(--out);
 }
 
@@ -628,16 +637,7 @@ button:focus-visible {
   }
 
   .player-row {
-    grid-template-columns: 32px minmax(0, 1fr) 62px;
-  }
-
-  .row-actions {
-    grid-column: 1 / -1;
-    grid-template-columns: repeat(3, 1fr);
-  }
-
-  .row-actions .icon-button {
-    width: 100%;
+    grid-template-columns: 32px minmax(0, 1fr) 62px 34px;
   }
 
   .split {

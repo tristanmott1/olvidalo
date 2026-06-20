@@ -1,6 +1,5 @@
 import {
   ArrowDown,
-  ArrowUp,
   GripVertical,
   Info,
   Pause,
@@ -17,6 +16,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -391,6 +391,7 @@ function App() {
   const [leaderboardTab, setLeaderboardTab] = useState<LeaderboardTab>("overall");
   const [draggingPlayerId, setDraggingPlayerId] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
+  const draftNameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     localStorage.setItem(PLAYERS_KEY, JSON.stringify(players));
@@ -484,6 +485,7 @@ function App() {
     ]);
     setDraftName("");
     setDraftOutLimit(DEFAULT_OUT_LIMIT);
+    draftNameInputRef.current?.focus();
   }
 
   function updatePlayer(playerId: string, updates: Partial<Player>) {
@@ -502,19 +504,6 @@ function App() {
       const toIndex = currentPlayers.findIndex((player) => player.id === overPlayerId);
 
       if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) {
-        return currentPlayers;
-      }
-
-      return moveItem(currentPlayers, fromIndex, toIndex);
-    });
-  }
-
-  function movePlayer(playerId: string, direction: -1 | 1) {
-    setPlayers((currentPlayers) => {
-      const fromIndex = currentPlayers.findIndex((player) => player.id === playerId);
-      const toIndex = fromIndex + direction;
-
-      if (fromIndex < 0 || toIndex < 0 || toIndex >= currentPlayers.length) {
         return currentPlayers;
       }
 
@@ -761,14 +750,26 @@ function App() {
           <section className="section-panel">
             <div className="section-heading">
               <h1>Players</h1>
-              <button className="secondary" type="button" onClick={() => setPlayers(shufflePlayers(players))}>
-                <Shuffle size={18} />
-                Randomize
-              </button>
+              <div className="heading-actions">
+                <button className="secondary" type="button" onClick={() => setPlayers(shufflePlayers(players))}>
+                  <Shuffle size={18} />
+                  Randomize
+                </button>
+                <button
+                  className="secondary danger-button"
+                  type="button"
+                  onClick={() => setPlayers([])}
+                  disabled={players.length === 0}
+                >
+                  <Trash2 size={18} />
+                  Clear
+                </button>
+              </div>
             </div>
 
             <form className="add-player" onSubmit={addPlayer}>
               <input
+                ref={draftNameInputRef}
                 value={draftName}
                 onChange={(event) => setDraftName(event.target.value)}
                 placeholder="Name"
@@ -792,7 +793,7 @@ function App() {
             </form>
 
             <div className="player-list">
-              {players.map((player, index) => (
+              {players.map((player) => (
                 <article
                   className={draggingPlayerId === player.id ? "player-row dragging" : "player-row"}
                   data-player-id={player.id}
@@ -822,34 +823,14 @@ function App() {
                       </option>
                     ))}
                   </select>
-                  <div className="row-actions">
-                    <button
-                      className="icon-button"
-                      type="button"
-                      onClick={() => movePlayer(player.id, -1)}
-                      disabled={index === 0}
-                      aria-label={`Move ${player.name} up`}
-                    >
-                      <ArrowUp size={16} />
-                    </button>
-                    <button
-                      className="icon-button"
-                      type="button"
-                      onClick={() => movePlayer(player.id, 1)}
-                      disabled={index === players.length - 1}
-                      aria-label={`Move ${player.name} down`}
-                    >
-                      <ArrowDown size={16} />
-                    </button>
-                    <button
-                      className="icon-button danger"
-                      type="button"
-                      onClick={() => removePlayer(player.id)}
-                      aria-label={`Remove ${player.name || "player"}`}
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
+                  <button
+                    className="icon-button danger"
+                    type="button"
+                    onClick={() => removePlayer(player.id)}
+                    aria-label={`Remove ${player.name || "player"}`}
+                  >
+                    <Trash2 size={16} />
+                  </button>
                 </article>
               ))}
             </div>
