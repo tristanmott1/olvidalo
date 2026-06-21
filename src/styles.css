@@ -597,6 +597,11 @@ button:focus-visible {
   justify-content: flex-end;
 }
 
+.choice-actions {
+  display: grid;
+  gap: 8px;
+}
+
 .map-empty {
   margin: -2px 0 0;
   color: var(--muted);
@@ -658,6 +663,48 @@ button:focus-visible {
   border-radius: 999px;
   background: #1f7fe5;
   box-shadow: 0 0 0 2px rgba(31, 127, 229, 0.32);
+}
+
+.draw-map-modal {
+  width: min(100%, 760px);
+}
+
+.draw-colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.draw-color {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 2px solid rgba(18, 63, 56, 0.16);
+  border-radius: 999px;
+  color: var(--brand);
+  font-size: 0.7rem;
+  font-weight: 950;
+}
+
+.draw-color.selected {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(31, 109, 97, 0.14);
+}
+
+.draw-surface {
+  display: block;
+  width: 100%;
+  min-height: 420px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  touch-action: none;
+}
+
+.draw-size input {
+  min-height: 32px;
+  padding: 0;
 }
 
 .rules-panel {
@@ -820,6 +867,10 @@ button:focus-visible {
   }
 
   .map-surface {
+    min-height: 360px;
+  }
+
+  .draw-surface {
     min-height: 360px;
   }
 

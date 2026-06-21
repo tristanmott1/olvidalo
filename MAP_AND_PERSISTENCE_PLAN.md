@@ -2,65 +2,137 @@
 
 ## Summary
 
-Keep the existing Olvidalo game flow, active-game persistence, and kick mapping, then refine the map experience around a fixed swing reference. When location is enabled at game start, the user should set up the game map by choosing the swing location and orienting the map with normal Leaflet pan/zoom. Later kick pickers and kick viewers should reuse that saved center/zoom, show the swing for reference, and show the user's current location as a blue dot.
+Add a third start-game map option: a hand-drawn course. The app should support three choices when starting a game:
 
-The implementation should stay simple. Do not create separate map systems for setup, picking, and viewing. Use one small map modal with clear modes and one map settings object stored in the active game. Remove or replace any older "last map center only" assumptions that no longer fit. The final code should look like the intended design from the start, not a stack of patches.
+- `No Map`: no kick picker or viewer.
+- `Use Location`: real Leaflet/OpenStreetMap setup with GPS, swing marker, current-location blue dot, and saved kick locations.
+- `Draw Course`: a blank white drawing space with the swing fixed at world coordinate `{ x: 0, y: 0 }`, pan/zoom gestures, brush controls, and saved kick locations.
+
+The drawn course should behave like the real map during play: after Fair or Out, the picker opens; the user selects the kick location; the viewer can show saved kicks filtered by player and round; refresh restores the active game; Exit clears everything. The implementation should not fake drawn points as latitude/longitude. Keep real maps and drawn maps as sibling implementations with a small shared app-level model.
+
+The code should stay simple, deliberate, and minimal. Remove outdated assumptions rather than layering around them. Someone reading the code should see one clean map model, one active-game persistence story, and two focused map surfaces.
 
 ## Desired User Flow
 
 1. The user presses Start on the Home page.
-2. The app asks whether to use location for this game.
-3. If the user declines, the game starts normally with no map picker and no map setup.
-4. If the user accepts, the browser requests location permission.
-5. If permission is denied or unavailable, location mode is disabled and the game starts normally.
-6. If permission is granted, a map setup modal opens before the game starts.
-7. The setup modal shows the user's current location as a blue dot.
-8. The user pans/zooms the map and taps the swing location.
-9. The user saves the setup.
-10. The game starts with location mode enabled.
-11. During Play, every Fair or Out press records the kick immediately.
-12. If location mode is enabled, an empty kick picker opens after that Fair or Out.
-13. The timer keeps running while the picker is open.
-14. The picker uses the saved setup center/zoom, shows the swing marker, and shows the current location blue dot.
-15. The user can dismiss the picker or select a point and save it.
-16. The Play page map button opens the kick viewer.
-17. The Results page map button opens the same kick viewer.
-18. The viewer uses the saved setup center/zoom, shows the swing marker, and shows the current location blue dot.
-19. Refreshing or closing the app restores the active game.
-20. A running timer always restores as paused.
-21. Exiting Play or Results clears the saved active game and all saved locations.
+2. The app shows three choices:
+   - `No Map`
+   - `Use Location`
+   - `Draw Course`
+3. If the user chooses `No Map`, the game starts normally with no map picker and no map viewer button.
+4. If the user chooses `Use Location`, the app requests location permission.
+5. If real-location permission fails, the game starts with no map and shows a small notice.
+6. If real-location permission succeeds, the real map setup opens.
+7. In real map setup, the user pans/zooms, selects the swing location, and saves.
+8. The game starts with the real map setup.
+9. If the user chooses `Draw Course`, the drawn course setup opens immediately.
+10. In drawn setup, the swing is already fixed in the middle at world coordinate `{ x: 0, y: 0 }`.
+11. The user draws the course around the swing using brush color and brush size controls.
+12. The user can pan and pinch-zoom the drawing space while drawing.
+13. The user saves the drawn course.
+14. The game starts with the drawn map setup.
+15. During Play, every Fair or Out records the kick immediately.
+16. If the active game has a map setup, the kick picker opens after Fair or Out.
+17. The timer keeps running while the picker is open.
+18. Real picker shows the saved real map view, swing marker, and current-location blue dot when available.
+19. Drawn picker shows the saved drawing, swing marker, and saved drawn view.
+20. The user can dismiss the picker or select one kick location and save it.
+21. The Play page map button opens the viewer when a map setup exists.
+22. The Results page map button opens the same viewer.
+23. Viewers use Player and Round dropdown filters with `All` options.
+24. Refreshing or closing the app restores the active game.
+25. A running timer always restores as paused.
+26. Exiting Play or Results clears the active game, map setup, drawing, and saved kick locations.
 
 ## Existing Implemented Base
 
 The app already has:
 
 - Leaflet installed.
-- `src/MapModal.tsx`.
-- `src/map.ts`.
+- `src/MapModal.tsx` for real maps.
+- `src/map.ts` for real map types and icons.
 - Active-game localStorage persistence.
+- Real map setup with swing location and saved map view.
+- Current-location blue dot for real maps.
 - Event IDs on turn events.
 - Saved kick locations on Fair/Out events.
 - Results preserving completed event data.
-- Play and Results map viewer buttons.
-- Service worker cache `olvidalo-v9`.
+- Play and Results map viewer buttons when a map exists.
+- Service worker cache should be bumped to `olvidalo-v10` in this pass.
 
-The next pass should update these pieces rather than adding a second map layer.
+The next pass should preserve the real-map work while adding drawn maps as a parallel map kind.
 
 ## State Model
 
-Keep one source of truth for map setup:
+Use explicit map kinds instead of forcing all points into latitude/longitude.
 
 ```ts
+type LocationPoint = {
+  lat: number;
+  lng: number;
+  accuracy: number | null;
+};
+
 type MapView = {
   center: LocationPoint;
   zoom: number;
 };
 
-type MapSetup = {
+type DrawPoint = {
+  x: number;
+  y: number;
+};
+
+type DrawView = {
+  center: DrawPoint;
+  zoom: number;
+};
+
+type DrawStroke = {
+  id: string;
+  color: string;
+  size: number;
+  points: DrawPoint[];
+};
+
+type RealMapSetup = {
+  kind: "real";
   swing: LocationPoint;
   view: MapView;
 };
+
+type DrawnMapSetup = {
+  kind: "drawn";
+  swing: DrawPoint;
+  view: DrawView;
+  strokes: DrawStroke[];
+};
+
+type MapSetup = RealMapSetup | DrawnMapSetup;
+
+type KickLocation =
+  | {
+      kind: "real";
+      point: LocationPoint;
+    }
+  | {
+      kind: "drawn";
+      point: DrawPoint;
+    };
 ```
+
+Update Fair/Out events:
+
+```ts
+type KickEvent = {
+  id: string;
+  kind: HitKind;
+  elapsedMs: number;
+  location: KickLocation | null;
+};
+```
+
+Keep adjustment events separate and location-free.
 
 Update the active game:
 
@@ -73,40 +145,48 @@ type ActiveGame = {
   currentRound: number;
   currentTurn: TurnState | null;
   completedTurns: TurnResult[];
-  locationMode: LocationMode;
   mapSetup: MapSetup | null;
 };
 ```
 
-Replace older map state:
+Remove or replace:
 
-- Remove `lastMapCenter` from active game and component state.
-- Do not use kick locations to choose the default map view.
-- Do not store map filter state in localStorage.
-- Do not store open modal state in localStorage.
+- `LocationMode`; map presence is now `mapSetup !== null`.
+- Any branch that assumes maps are only real/GPS maps.
+- Any saved kick marker logic that assumes every kick location has `lat/lng`.
 
 Keep:
 
 - `TurnEvent.location` as the only source of truth for saved kicks.
 - `TurnResult.events` as the completed-turn source of truth.
 - `TurnState` as the active-turn source of truth.
+- `mapSetup` as the only source of truth for real/drawn map setup.
 
 ## Modal State
 
-Use one modal component with three modes:
+Use explicit setup/picker/viewer state:
 
 ```ts
-type SetupState = {
+type StartMapChoice = "none" | "real" | "drawn";
+
+type RealSetupState = {
   center: LocationPoint;
   currentLocation: LocationPoint;
   selectedSwing: LocationPoint | null;
   zoom: number;
 };
 
+type DrawSetupState = {
+  view: DrawView;
+  strokes: DrawStroke[];
+  color: string;
+  size: number;
+};
+
 type PickerState = {
   eventId: string;
+  selected: KickLocation | null;
   currentLocation: LocationPoint | null;
-  selected: LocationPoint | null;
 };
 
 type ViewerState = {
@@ -117,158 +197,263 @@ type ViewerState = {
 };
 ```
 
-Do not persist these modal states. They are UI state only.
+Do not persist modal state. Persist only the active game snapshot.
 
-## Location Permission And Setup Flow
+## Start Flow
 
-Update the start-game location branch:
+The Start button should:
 
-1. Home Start validates players.
-2. Show the existing location prompt.
-3. If the user chooses No, start with `locationMode: "off"` and `mapSetup: null`.
-4. If the user chooses Yes, call `navigator.geolocation.getCurrentPosition`.
-5. If permission fails, start with `locationMode: "off"` and `mapSetup: null`.
-6. If permission succeeds, open setup modal centered on the user's current location.
-7. The game does not start until setup is saved or canceled.
-8. If setup is canceled, start with `locationMode: "off"` and `mapSetup: null`.
-9. If setup is saved, start with `locationMode: "on"` and the saved `mapSetup`.
+1. Validate and trim players.
+2. Clear any old active game.
+3. Show a compact map-choice modal with three actions:
+   - `No Map`
+   - `Use Location`
+   - `Draw Course`
 
-This makes the swing reference required for any location-enabled game.
+### No Map
 
-## Setup Map
+Start immediately with:
 
-The setup map should:
+```ts
+mapSetup: null
+```
 
-- Show no kick markers.
-- Show the user's current location as a blue dot.
-- Let the user tap the swing location.
-- Show the selected swing marker immediately.
-- Let the user pan and zoom before saving.
-- Save the map center and zoom at the moment the user presses Save.
-- Require a selected swing before Save is enabled.
+### Use Location
 
-No rotation is needed. “Orientation” means center plus zoom.
+1. Request `navigator.geolocation.getCurrentPosition`.
+2. If permission fails, start with `mapSetup: null` and a notice.
+3. If permission succeeds, open `RealSetupState`.
+4. Real setup Save creates a `RealMapSetup`.
+5. Real setup Skip starts with `mapSetup: null`.
 
-## Kick Location Picker
+### Draw Course
 
-The picker should:
+1. Open `DrawSetupState` immediately.
+2. The initial drawn view centers on `{ x: 0, y: 0 }`.
+3. The swing is fixed at `{ x: 0, y: 0 }`.
+4. Drawn setup Save creates a `DrawnMapSetup`.
+5. Drawn setup Skip starts with `mapSetup: null`.
 
-- Open after Fair or Out only when `locationMode === "on"` and `mapSetup` exists.
-- Record the kick before opening the picker.
-- Keep the timer running.
-- Show no previous kicks.
-- Use `mapSetup.view.center` and `mapSetup.view.zoom`.
-- Show the swing marker from `mapSetup.swing`.
-- Show the user's current location as a blue dot.
+## Real Map Behavior
+
+Keep the current Leaflet behavior:
+
+- Real setup shows current location as a blue dot.
+- Real setup lets the user select the swing.
+- Real setup saves pan/zoom and swing.
+- Real picker uses saved pan/zoom and swing.
+- Real picker shows current location blue dot when available.
+- Real viewer uses saved pan/zoom and swing.
+- Real viewer shows current location blue dot when available.
+- Real viewer shows real kick markers only.
+- If current-location refresh fails after setup, the map still works without the blue dot.
+
+## Drawn Course Behavior
+
+The drawn course should behave like a map, not like a static image.
+
+### Drawn Setup
+
+The drawn setup modal should:
+
+- Show a blank white canvas.
+- Show the swing marker fixed at world coordinate `{ x: 0, y: 0 }`.
+- Start with the swing visually centered.
+- Let the user draw strokes around the swing.
+- Let the user pan and zoom the drawing space.
+- Persist strokes in world coordinates.
+- Persist the final view center/zoom.
+- Save without requiring any strokes.
+- Include a `Clear` button.
+
+Controls:
+
+- Top row: circular color swatches.
+- Include black as the default color.
+- Include several simple colors that fit the app.
+- Include an eraser option.
+- Bottom row: continuous horizontal brush-size slider.
+- Save/Skip buttons.
+
+Gestures:
+
+- One finger draws when drawing.
+- Two-finger pinch zooms in and out.
+- Two-finger drag pans.
+- Mouse/pointer drag draws on desktop.
+- Wheel zoom can be supported on desktop if simple.
+
+The drawing surface does not need a separate Draw/Move toggle if two-finger gestures cover map movement. If panning with one finger becomes necessary later, add a mode toggle, but do not introduce it in this pass unless the implementation needs it for usability.
+
+### Drawn Picker
+
+The drawn picker should:
+
+- Open after Fair or Out when `mapSetup.kind === "drawn"`.
+- Use the saved drawn view.
+- Show the saved strokes.
+- Show the swing marker at `{ x: 0, y: 0 }`.
+- Show saved drawing only, not previous kicks.
+- Let the user pan and pinch-zoom.
 - Let the user tap one kick location.
-- Save the selected point onto that event.
-- Dismiss without saving a location.
-- Close if Undo removes the pending event.
+- Show the selected kick marker.
+- Save that point as `{ kind: "drawn", point }`.
+- Dismiss without saving.
 
-When opening the picker:
+### Drawn Viewer
 
-1. Open immediately using `mapSetup` and `currentLocation: null`.
-2. Request current location.
-3. If it succeeds, update the picker blue dot.
-4. If it fails, keep the picker open without a blue dot.
+The drawn viewer should:
 
-Do not disable location mode if a later current-location refresh fails. The saved swing setup is still valid, and manual map selection still works.
-
-## Kick Map Viewer
-
-The viewer should:
-
-- Reuse the same map modal component.
-- Use `mapSetup.view.center` and `mapSetup.view.zoom`.
-- Show the swing marker from `mapSetup.swing`.
-- Show the user's current location as a blue dot when available.
-- Show saved Fair and Out markers after filters are applied.
+- Use the saved drawn view.
+- Show the saved strokes.
+- Show the swing marker.
+- Show filtered Fair/Out markers from saved drawn kick locations.
 - Keep Player and Round dropdown filters.
+- Let the user pan and pinch-zoom.
 
-Viewer defaults:
+## Component Structure
 
-- Opened from Play: `playerId` is the current player, `round` is `all`.
-- Opened from Results: `playerId` is `all`, `round` is `all`.
+Keep real maps and drawn maps separate:
 
-When opening the viewer:
+- `src/MapModal.tsx`: real Leaflet setup/picker/viewer.
+- `src/DrawMapModal.tsx`: drawn setup/picker/viewer.
+- `src/map.ts`: shared map domain types plus real Leaflet helpers.
+- `src/drawMap.ts`: small drawn-map helpers if needed.
 
-1. Open immediately using `mapSetup` and `currentLocation: null`.
-2. Request current location.
-3. If it succeeds, update the viewer blue dot.
-4. If it fails, leave the viewer open without a blue dot.
-
-If location mode is off or `mapSetup` is missing, the map button should either be hidden or disabled. Prefer hiding it to keep the UI minimal.
-
-## Map Component Structure
-
-Keep the map code isolated:
-
-- `src/map.ts` for map types and Leaflet icon helpers.
-- `src/MapModal.tsx` for setup, picker, and viewer modes.
-- Keep styles in `src/styles.css` unless the map CSS becomes too large.
-
-### `src/map.ts`
-
-Add or update helpers:
-
-- `MapView`
-- `MapSetup`
-- `LocationPoint`
-- `KickMarker`
-- `createKickIcon`
-- `createSelectedIcon`
-- `createSwingIcon`
-- `createCurrentLocationIcon`
-- `toLeafletPoint`
-
-Keep helpers tiny and direct. Avoid a general map abstraction.
+Avoid making one giant component that knows both Leaflet and canvas drawing internals.
 
 ### `src/MapModal.tsx`
 
-Use Leaflet imperatively with refs:
+Continue to support real map modes only:
 
-- Create the map once.
-- Update the center/zoom when mode opens.
-- Track map movement in setup mode so Save can capture the current view.
-- Rebuild the marker layer from React props.
-- Destroy the map on unmount.
+- `setup`
+- `picker`
+- `viewer`
 
-The prop shape should remain explicit:
+It should accept only real-map setup and real kick markers.
+
+### `src/DrawMapModal.tsx`
+
+Support drawn map modes only:
+
+- `setup`
+- `picker`
+- `viewer`
+
+Responsibilities:
+
+- Own the canvas refs.
+- Render strokes, swing, selected marker, and saved markers.
+- Convert screen points to world points.
+- Convert world points to screen points.
+- Track pointer gestures.
+- Pause drawing while two-finger gestures are active.
+- Keep code small with local helper functions.
+
+## Drawing Coordinate System
+
+Use a simple world coordinate system:
+
+- Swing: `{ x: 0, y: 0 }`.
+- Positive `x`: right.
+- Positive `y`: down.
+- `view.center`: the world point at the center of the canvas.
+- `view.zoom`: pixels per world unit multiplier.
+
+Recommended defaults:
 
 ```ts
-type MapModalProps =
-  | {
-      mode: "setup";
-      center: LocationPoint;
-      currentLocation: LocationPoint;
-      selectedSwing: LocationPoint | null;
-      onCancel: () => void;
-      onSave: (setup: MapSetup) => void;
-      onSelectSwing: (point: LocationPoint) => void;
-    }
-  | {
-      mode: "picker";
-      setup: MapSetup;
-      currentLocation: LocationPoint | null;
-      selected: LocationPoint | null;
-      onCancel: () => void;
-      onSave: () => void;
-      onSelect: (point: LocationPoint) => void;
-    }
-  | {
-      mode: "viewer";
-      setup: MapSetup;
-      currentLocation: LocationPoint | null;
-      markers: KickMarker[];
-      players: Player[];
-      rounds: number;
-      selectedPlayerId: string | "all";
-      selectedRound: number | "all";
-      onClose: () => void;
-      onPlayerChange: (playerId: string | "all") => void;
-      onRoundChange: (round: number | "all") => void;
-    };
+const DRAW_SWING: DrawPoint = { x: 0, y: 0 };
+const DEFAULT_DRAW_VIEW: DrawView = {
+  center: DRAW_SWING,
+  zoom: 1,
+};
 ```
+
+Use helper functions:
+
+- `screenToWorld`
+- `worldToScreen`
+- `clampDrawZoom`
+- `distance`
+- `midpoint`
+
+## Marker And Viewer Data
+
+Update marker building to split real and drawn markers:
+
+```ts
+type RealKickMarker = {
+  id: string;
+  kind: HitKind;
+  playerId: string;
+  playerName: string;
+  round: number;
+  elapsedMs: number;
+  location: LocationPoint;
+};
+
+type DrawKickMarker = {
+  id: string;
+  kind: HitKind;
+  playerId: string;
+  playerName: string;
+  round: number;
+  elapsedMs: number;
+  point: DrawPoint;
+};
+```
+
+Build markers from:
+
+- `completedTurns`
+- `currentTurn`
+
+Filter by:
+
+- Player dropdown.
+- Round dropdown.
+- Map kind.
+
+Do not show real markers on drawn maps or drawn markers on real maps.
+
+## Persistence Rules
+
+Persist:
+
+- `mapSetup`, including real setup or drawn setup.
+- Drawn strokes.
+- Saved kick locations, real or drawn.
+- Active game state.
+
+Do not persist:
+
+- Open start-choice modal state.
+- Open setup/picker/viewer modal state.
+- Current-location blue dot.
+- Viewer filters.
+- Unsaved selected kick point.
+- Unsaved in-progress stroke.
+
+Restore:
+
+- Active page.
+- Active turn and completed turns.
+- Real or drawn map setup.
+- Saved real/drawn kick locations.
+- Running timers as paused.
+
+Clear:
+
+- Everything active-game related on explicit Exit.
+- Everything active-game related when starting a brand-new game.
+
+Play Again:
+
+- Starts a fresh game with same players/order/settings.
+- Clears old scores and kick locations.
+- Reuses the same real or drawn map setup without asking again.
+- For drawn setup, reuse the course drawing and view.
 
 ## Styling
 
@@ -282,76 +467,40 @@ Keep the current visual identity:
 - Compact controls.
 - 8px radius convention.
 
-Add marker styling:
+Drawn map styling:
 
-- Swing marker: small dark-green/off-white swing or simple swing glyph.
-- Current location: blue dot with a soft ring.
-- Selected swing/kick: gold dot.
-- Fair: green/gold marker.
-- Out: clay/red marker.
+- White canvas.
+- Dark green swing marker.
+- Fair/Out markers matching real-map marker colors.
+- Selected marker gold.
+- Color swatches as small circles.
+- Eraser swatch clearly marked.
+- Brush-size slider at the bottom.
+- Minimal buttons: `Clear`, `Skip`, `Save`.
 
 Avoid:
 
-- Large explanatory copy.
-- Separate map pages.
-- Duplicate map labels.
-- Busy marker legends.
-- Rotation plugins.
-
-## Persistence Rules
-
-Persist `mapSetup` inside the active game.
-
-Do not persist:
-
-- Setup modal open state.
-- Picker modal open state.
-- Viewer modal open state.
-- Viewer filters.
-- Current blue-dot location.
-- Unsaved selected swing/kick point.
-
-Restore:
-
-- `mapSetup`.
-- `locationMode`.
-- saved kick locations.
-- active game state.
-
-Clear:
-
-- Everything active-game related on explicit Exit.
-- Everything active-game related when starting a brand-new game.
-
-Play Again:
-
-- Starts a fresh game with same players/order/settings.
-- Clears old scores and kick locations.
-- If previous game had location mode and setup, reuse the same setup without asking again.
+- Long explanatory text.
+- Decorative canvas chrome.
+- Extra drawing tools beyond color, eraser, size, clear.
+- Separate pages.
+- Fake lat/lng for drawn data.
 
 ## App Logic Changes
 
 ### Start Game
 
-Update start to:
-
-1. Validate and trim players.
-2. Clear any old active game.
-3. Ask whether to use location.
-4. If no, start immediately with no map setup.
-5. If yes and permission succeeds, open setup.
-6. If setup saves, start with map setup.
-7. If setup cancels or permission fails, start without location.
+Replace the two-choice location prompt with a three-choice map prompt.
 
 ### Fair And Out
 
-Update the existing kick handler:
+After recording a kick:
 
-1. Calculate adjusted elapsed time.
-2. Create a `KickEvent` with stable ID and `location: null`.
-3. Add it to `currentTurn.events`.
-4. Apply existing final-out behavior.
-5. If `locationMode === "on"` and `mapSetup` exists, open picker using setup view.
+- If `mapSetup` is null, do nothing else.
+- If `mapSetup.kind === "real"`, open the real picker.
+- If `mapSetup.kind === "drawn"`, open the drawn picker.
+
+The timer keeps running in every case.
 
 ### Undo
 
@@ -360,33 +509,37 @@ Keep current undo behavior:
 - Remove the most recent event.
 - If removed event is the pending picker event, close picker.
 - If removed event is the final out, restore the turn to paused.
-- Saved kick location disappears because the entire event disappears.
+- Saved kick location disappears because the event disappears.
 
 ### Viewer
 
-Build viewer markers from:
+Open viewer only when `mapSetup` exists.
 
-- `completedTurns`.
-- `currentTurn`.
+- Real setup opens real viewer.
+- Drawn setup opens drawn viewer.
 
-Apply filters after building the full marker list.
+Defaults:
+
+- Play: current player, all rounds.
+- Results: all players, all rounds.
 
 ## Code Cleanup Rules
 
 Actively remove or simplify:
 
-- `lastMapCenter` state.
-- Any fallback that uses the first kick marker as the default viewer center.
-- Any branch that disables location mode because a later blue-dot refresh failed.
-- Any separate swing or marker storage outside `mapSetup` and `TurnEvent.location`.
-- Any map view state that persists independently from active game state.
+- `LocationMode`.
+- Any branch that treats map support as only GPS/location based.
+- Any marker builder that assumes every point is `lat/lng`.
+- Any drawn-map logic inside `MapModal.tsx`.
+- Any real-map Leaflet logic inside `DrawMapModal.tsx`.
+- Any unused current-location state in drawn mode.
 
 Keep:
 
 - One source of truth for scoring: `TurnResult[]`.
 - One source of truth for saved kick locations: `TurnEvent.location`.
-- One source of truth for swing/view setup: `mapSetup`.
-- One reusable map modal.
+- One source of truth for setup: `mapSetup`.
+- Separate focused components for real and drawn maps.
 
 ## Commenting Style
 
@@ -401,11 +554,12 @@ Match the current code style:
 
 Add comments specifically around:
 
-- Capturing map center/zoom in setup mode.
-- Showing current location as transient UI state only.
+- Distinguishing real and drawn map setup.
+- Saving drawn strokes in world coordinates.
+- Pointer gesture handling.
+- Pinch zoom and two-finger pan.
 - Opening the picker after recording the kick.
 - Keeping timer running while the picker is open.
-- Reusing `mapSetup` for picker and viewer.
 - Restoring a running timer as paused.
 
 Do not add comments that merely describe obvious JSX or CSS declarations.
@@ -415,7 +569,7 @@ Do not add comments that merely describe obvious JSX or CSS declarations.
 Bump the service worker cache to:
 
 ```ts
-olvidalo-v9
+olvidalo-v10
 ```
 
 ## Test Plan
@@ -429,55 +583,61 @@ git diff --check
 
 Manual checks:
 
-1. Start a game and decline location.
-2. Confirm the map button is hidden or disabled.
-3. Confirm Fair/Out do not open maps when location is off.
-4. Start a game and accept location.
-5. Confirm permission denial starts without location.
-6. Confirm permission success opens setup before Play.
-7. Confirm setup shows current location as a blue dot.
-8. Confirm setup Save is disabled until a swing is selected.
-9. Pan/zoom setup, select swing, save, and confirm Play starts.
-10. Press Fair and confirm the picker opens with saved setup view.
-11. Confirm picker shows the swing marker.
-12. Confirm picker shows current location when available.
-13. Confirm timer keeps running while picker is open.
-14. Dismiss picker and confirm no kick location is saved.
-15. Press Out, select a kick point, and save.
-16. Open Play viewer and confirm default filters are current player and all rounds.
-17. Confirm viewer shows swing marker, current location, and saved kick markers.
-18. Change Player and Round filters and confirm markers update.
-19. Undo a located kick and confirm the marker disappears.
-20. Finish a game and open Results viewer.
-21. Confirm Results viewer defaults are all players and all rounds.
-22. Refresh during Play with a running timer.
-23. Confirm the game restores paused and keeps map setup and saved kick locations.
-24. Refresh on Results.
-25. Confirm Results restores scores, map setup, and saved kick locations.
-26. Exit from Play and confirm active game data is cleared.
-27. Exit from Results and confirm active game data is cleared.
-28. Play Again and confirm scores/kicks reset without reshuffling.
-29. If previous game had map setup, confirm Play Again reuses that setup.
-30. Confirm Longest and Hits leaderboards still match existing scoring rules.
-31. Confirm bonus and penalty events do not create map markers.
+1. Start a game and choose `No Map`.
+2. Confirm the map button is hidden.
+3. Confirm Fair/Out do not open a picker.
+4. Start a game and choose `Use Location`.
+5. Confirm permission denial starts without a map.
+6. Confirm permission success opens real setup before Play.
+7. Confirm real setup saves swing and map view.
+8. Press Fair and confirm real picker opens with saved view and swing.
+9. Confirm real picker can save a real kick location.
+10. Open real viewer and confirm filters work.
+11. Start a game and choose `Draw Course`.
+12. Confirm drawn setup opens with white canvas and swing centered.
+13. Draw with the default black brush.
+14. Change brush color and size.
+15. Use eraser.
+16. Pinch zoom and two-finger pan while drawing.
+17. Clear the drawing.
+18. Draw again and save.
+19. Confirm Play starts with drawn map setup.
+20. Press Fair and confirm drawn picker opens with the saved drawing and swing.
+21. Pan/zoom drawn picker and save a kick point.
+22. Open drawn viewer and confirm drawing, swing, and markers appear.
+23. Confirm drawn viewer filters by player and round.
+24. Undo a located drawn kick and confirm its marker disappears.
+25. Finish a game and open Results viewer for real and drawn setups.
+26. Refresh during Play with a running timer.
+27. Confirm the game restores paused with real or drawn setup intact.
+28. Refresh on Results.
+29. Confirm scores, map setup, drawing, and saved kick locations restore.
+30. Exit from Play and confirm active game data is cleared.
+31. Exit from Results and confirm active game data is cleared.
+32. Play Again after real setup and confirm it reuses the real setup.
+33. Play Again after drawn setup and confirm it reuses the drawn course.
+34. Confirm Longest and Hits leaderboards still match existing scoring rules.
+35. Confirm bonus and penalty events do not create map markers.
 
 ## Implementation Order
 
-1. Update map types in `src/map.ts`.
-2. Add swing and current-location icons.
-3. Update `MapModal` to support setup, picker, and viewer modes.
-4. Replace `lastMapCenter` state with `mapSetup`.
-5. Update active-game read/write validation for `mapSetup`.
-6. Update start flow to open setup before Play.
-7. Update picker to use `mapSetup` view and transient current location.
-8. Update viewer to use `mapSetup` view and transient current location.
-9. Hide or disable map buttons when no `mapSetup` exists.
-10. Update CSS for swing and blue-dot markers.
-11. Bump service worker cache to `olvidalo-v9`.
-12. Run build and diff checks.
+1. Update map/domain types for real and drawn setup.
+2. Update active-game read/write validation for real and drawn setup.
+3. Replace the start prompt with `No Map`, `Use Location`, and `Draw Course`.
+4. Split marker building into real and drawn marker lists.
+5. Keep `MapModal` focused on real maps.
+6. Add `src/drawMap.ts` helpers.
+7. Add `src/DrawMapModal.tsx`.
+8. Wire drawn setup save/skip into start flow.
+9. Wire drawn picker into Fair/Out flow.
+10. Wire drawn viewer into Play/Results map buttons.
+11. Add CSS for drawn canvas controls and markers.
+12. Remove `LocationMode` and old location-only branches.
+13. Bump service worker cache to `olvidalo-v10`.
+14. Run build and diff checks.
 
 ## Suggested Commit Message
 
 ```text
-Add swing map setup
+Add drawn course maps
 ```

@@ -11,10 +11,47 @@ export type MapView = {
   zoom: number;
 };
 
-export type MapSetup = {
+export type DrawPoint = {
+  x: number;
+  y: number;
+};
+
+export type DrawView = {
+  center: DrawPoint;
+  zoom: number;
+};
+
+export type DrawStroke = {
+  id: string;
+  color: string;
+  size: number;
+  points: DrawPoint[];
+};
+
+export type RealMapSetup = {
+  kind: "real";
   swing: LocationPoint;
   view: MapView;
 };
+
+export type DrawnMapSetup = {
+  kind: "drawn";
+  swing: DrawPoint;
+  view: DrawView;
+  strokes: DrawStroke[];
+};
+
+export type MapSetup = RealMapSetup | DrawnMapSetup;
+
+export type KickLocation =
+  | {
+      kind: "real";
+      point: LocationPoint;
+    }
+  | {
+      kind: "drawn";
+      point: DrawPoint;
+    };
 
 export type KickMarker = {
   id: string;
@@ -24,6 +61,16 @@ export type KickMarker = {
   round: number;
   elapsedMs: number;
   location: LocationPoint;
+};
+
+export type DrawKickMarker = {
+  id: string;
+  kind: "fair" | "out";
+  playerId: string;
+  playerName: string;
+  round: number;
+  elapsedMs: number;
+  point: DrawPoint;
 };
 
 export function toLeafletPoint(point: LocationPoint): L.LatLngExpression {

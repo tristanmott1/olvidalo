@@ -20,8 +20,21 @@ import {
   useRef,
   useState,
 } from "react";
+import DrawMapModal from "./DrawMapModal";
+import { DEFAULT_DRAW_SIZE, DEFAULT_DRAW_VIEW, DRAW_COLORS } from "./drawMap";
 import MapModal from "./MapModal";
-import type { KickMarker, LocationPoint, MapSetup } from "./map";
+import type {
+  DrawKickMarker,
+  DrawPoint,
+  DrawStroke,
+  DrawView,
+  DrawnMapSetup,
+  KickLocation,
+  KickMarker,
+  LocationPoint,
+  MapSetup,
+  RealMapSetup,
+} from "./map";
 
 type Player = {
   id: string;
@@ -36,7 +49,6 @@ type ScoringType = "longest" | "hits";
 type RoundScoring = "cumulative" | "best";
 type TimerStatus = "idle" | "running" | "paused" | "done";
 type LeaderboardTab = "overall" | "current";
-type LocationMode = "off" | "on";
 
 type GameSettings = {
   rounds: number;
@@ -51,7 +63,7 @@ type TurnEvent =
       id: string;
       kind: HitKind;
       elapsedMs: number;
-      location: LocationPoint | null;
+      location: KickLocation | null;
     }
   | {
       id: string;
@@ -86,21 +98,27 @@ type ActiveGame = {
   currentRound: number;
   currentTurn: TurnState | null;
   completedTurns: TurnResult[];
-  locationMode: LocationMode;
   mapSetup: MapSetup | null;
 };
 
-type SetupState = {
+type RealSetupState = {
   center: LocationPoint;
   currentLocation: LocationPoint;
   selectedSwing: LocationPoint | null;
   zoom: number;
 };
 
+type DrawSetupState = {
+  color: string;
+  size: number;
+  strokes: DrawStroke[];
+  view: DrawView;
+};
+
 type PickerState = {
   eventId: string;
   currentLocation: LocationPoint | null;
-  selected: LocationPoint | null;
+  selected: KickLocation | null;
 };
 
 type ViewerState = {
@@ -235,33 +253,120 @@ function readLocation(value: unknown): LocationPoint | null {
   };
 }
 
+function readDrawPoint(value: unknown): DrawPoint | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const point = value as Partial<DrawPoint>;
+  const x = Number(point.x);
+  const y = Number(point.y);
+
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+
+  return { x, y };
+}
+
+function readDrawStroke(value: unknown): DrawStroke | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const stroke = value as Partial<DrawStroke>;
+  const points = Array.isArray(stroke.points)
+    ? stroke.points.map(readDrawPoint).filter((point): point is DrawPoint => Boolean(point))
+    : [];
+  const size = Number(stroke.size);
+
+  if (typeof stroke.id !== "string" || typeof stroke.color !== "string" || !Number.isFinite(size)) {
+    return null;
+  }
+
+  return {
+    id: stroke.id,
+    color: stroke.color,
+    size,
+    points,
+  };
+}
+
 function readMapSetup(value: unknown): MapSetup | null {
   if (!value || typeof value !== "object") {
     return null;
   }
 
   const setup = value as {
+    kind?: unknown;
+    strokes?: unknown;
     swing?: unknown;
     view?: {
       center?: unknown;
       zoom?: unknown;
     };
   };
-  const swing = readLocation(setup.swing);
-  const center = readLocation(setup.view?.center);
   const zoom = Number(setup.view?.zoom);
 
-  if (!swing || !center || !Number.isFinite(zoom)) {
+  if (!Number.isFinite(zoom)) {
+    return null;
+  }
+
+  if (setup.kind === "drawn") {
+    const swing = readDrawPoint(setup.swing);
+    const center = readDrawPoint(setup.view?.center);
+    const strokes = Array.isArray(setup.strokes)
+      ? setup.strokes.map(readDrawStroke).filter((stroke): stroke is DrawStroke => Boolean(stroke))
+      : [];
+
+    if (!swing || !center) {
+      return null;
+    }
+
+    return {
+      kind: "drawn",
+      swing,
+      view: { center, zoom },
+      strokes,
+    };
+  }
+
+  const swing = readLocation(setup.swing);
+  const center = readLocation(setup.view?.center);
+
+  if (!swing || !center) {
     return null;
   }
 
   return {
+    kind: "real",
     swing,
-    view: {
-      center,
-      zoom,
-    },
+    view: { center, zoom },
   };
+}
+
+function readKickLocation(value: unknown): KickLocation | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const location = value as {
+    kind?: unknown;
+    point?: unknown;
+  };
+
+  if (location.kind === "drawn") {
+    const point = readDrawPoint(location.point);
+    return point ? { kind: "drawn", point } : null;
+  }
+
+  if (location.kind === "real") {
+    const point = readLocation(location.point);
+    return point ? { kind: "real", point } : null;
+  }
+
+  const legacyPoint = readLocation(value);
+  return legacyPoint ? { kind: "real", point: legacyPoint } : null;
 }
 
 function readTurnEvent(value: unknown): TurnEvent | null {
@@ -287,7 +392,7 @@ function readTurnEvent(value: unknown): TurnEvent | null {
       id: typeof event.id === "string" ? event.id : createId(),
       kind: event.kind,
       elapsedMs,
-      location: readLocation(event.location),
+      location: readKickLocation(event.location),
     };
   }
 
@@ -439,7 +544,6 @@ function readActiveGame(): ActiveGame | null {
       currentRound,
       currentTurn: readTurn(game.currentTurn),
       completedTurns,
-      locationMode: game.locationMode === "on" && mapSetup ? "on" : "off",
       mapSetup,
     };
   } catch {
@@ -680,9 +784,8 @@ function requestCurrentLocation() {
   });
 }
 
-function buildKickMarkers(results: TurnResult[], currentTurn: TurnState | null, players: Player[]): KickMarker[] {
-  const playerNames = new Map(players.map((player) => [player.id, player.name]));
-  const turns = [
+function buildMarkerTurns(results: TurnResult[], currentTurn: TurnState | null) {
+  return [
     ...results.map((result) => ({
       playerId: result.playerId,
       round: result.round,
@@ -696,13 +799,18 @@ function buildKickMarkers(results: TurnResult[], currentTurn: TurnState | null, 
         }]
       : []),
   ];
+}
+
+function buildRealKickMarkers(results: TurnResult[], currentTurn: TurnState | null, players: Player[]): KickMarker[] {
+  const playerNames = new Map(players.map((player) => [player.id, player.name]));
+  const turns = buildMarkerTurns(results, currentTurn);
 
   return turns.flatMap((turn) => {
     const markers: KickMarker[] = [];
 
-    // Only located Fair and Out events become map markers.
+    // Only real located Fair and Out events become Leaflet markers.
     turn.events.forEach((event) => {
-      if ((event.kind === "fair" || event.kind === "out") && event.location) {
+      if ((event.kind === "fair" || event.kind === "out") && event.location?.kind === "real") {
         markers.push({
           id: `${turn.playerId}-${turn.round}-${event.id}`,
           kind: event.kind,
@@ -710,7 +818,7 @@ function buildKickMarkers(results: TurnResult[], currentTurn: TurnState | null, 
           playerName: playerNames.get(turn.playerId) ?? "Player",
           round: turn.round,
           elapsedMs: event.elapsedMs,
-          location: event.location,
+          location: event.location.point,
         });
       }
     });
@@ -719,7 +827,33 @@ function buildKickMarkers(results: TurnResult[], currentTurn: TurnState | null, 
   });
 }
 
-function filterKickMarkers(markers: KickMarker[], viewer: ViewerState) {
+function buildDrawKickMarkers(results: TurnResult[], currentTurn: TurnState | null, players: Player[]): DrawKickMarker[] {
+  const playerNames = new Map(players.map((player) => [player.id, player.name]));
+  const turns = buildMarkerTurns(results, currentTurn);
+
+  return turns.flatMap((turn) => {
+    const markers: DrawKickMarker[] = [];
+
+    // Only drawn located Fair and Out events become canvas markers.
+    turn.events.forEach((event) => {
+      if ((event.kind === "fair" || event.kind === "out") && event.location?.kind === "drawn") {
+        markers.push({
+          id: `${turn.playerId}-${turn.round}-${event.id}`,
+          kind: event.kind,
+          playerId: turn.playerId,
+          playerName: playerNames.get(turn.playerId) ?? "Player",
+          round: turn.round,
+          elapsedMs: event.elapsedMs,
+          point: event.location.point,
+        });
+      }
+    });
+
+    return markers;
+  });
+}
+
+function filterKickMarkers<T extends { playerId: string; round: number }>(markers: T[], viewer: ViewerState) {
   return markers.filter((marker) => {
     const playerMatches = viewer.playerId === "all" || marker.playerId === viewer.playerId;
     const roundMatches = viewer.round === "all" || marker.round === viewer.round;
@@ -742,13 +876,13 @@ function App() {
   const [currentTurn, setCurrentTurn] = useState<TurnState | null>(savedGame?.currentTurn ?? null);
   const [completedTurns, setCompletedTurns] = useState<TurnResult[]>(savedGame?.completedTurns ?? []);
   const [leaderboardTab, setLeaderboardTab] = useState<LeaderboardTab>("overall");
-  const [locationMode, setLocationMode] = useState<LocationMode>(savedGame?.locationMode ?? "off");
   const [mapSetup, setMapSetup] = useState<MapSetup | null>(savedGame?.mapSetup ?? null);
   const [locationPromptOpen, setLocationPromptOpen] = useState(false);
   const [locationRequesting, setLocationRequesting] = useState(false);
   const [locationNotice, setLocationNotice] = useState("");
   const [pendingStartPlayers, setPendingStartPlayers] = useState<Player[]>([]);
-  const [setupState, setSetupState] = useState<SetupState | null>(null);
+  const [realSetupState, setRealSetupState] = useState<RealSetupState | null>(null);
+  const [drawSetupState, setDrawSetupState] = useState<DrawSetupState | null>(null);
   const [pickerState, setPickerState] = useState<PickerState | null>(null);
   const [viewerState, setViewerState] = useState<ViewerState | null>(null);
   const [draggingPlayerId, setDraggingPlayerId] = useState<string | null>(null);
@@ -786,7 +920,6 @@ function App() {
       currentRound,
       currentTurn: getSavedCurrentTurn(timestamp),
       completedTurns,
-      locationMode,
       mapSetup,
     };
 
@@ -811,7 +944,6 @@ function App() {
     currentRound,
     currentTurn,
     completedTurns,
-    locationMode,
     mapSetup,
   ]);
 
@@ -888,13 +1020,21 @@ function App() {
     () => buildLeaderboard(scoredTurns.filter((result) => result.round === currentRound), gamePlayers, settings),
     [scoredTurns, currentRound, gamePlayers, settings],
   );
-  const allKickMarkers = useMemo(
-    () => buildKickMarkers(completedTurns, currentTurn, gamePlayers),
+  const realKickMarkers = useMemo(
+    () => buildRealKickMarkers(completedTurns, currentTurn, gamePlayers),
     [completedTurns, currentTurn, gamePlayers],
   );
-  const visibleKickMarkers = useMemo(
-    () => (viewerState ? filterKickMarkers(allKickMarkers, viewerState) : []),
-    [allKickMarkers, viewerState],
+  const drawKickMarkers = useMemo(
+    () => buildDrawKickMarkers(completedTurns, currentTurn, gamePlayers),
+    [completedTurns, currentTurn, gamePlayers],
+  );
+  const visibleRealKickMarkers = useMemo(
+    () => (viewerState ? filterKickMarkers(realKickMarkers, viewerState) : []),
+    [realKickMarkers, viewerState],
+  );
+  const visibleDrawKickMarkers = useMemo(
+    () => (viewerState ? filterKickMarkers(drawKickMarkers, viewerState) : []),
+    [drawKickMarkers, viewerState],
   );
   const onDeckPlayers = getOnDeckPlayers(gamePlayers, currentRound, currentPlayerIndex, settings.rounds);
   const canStart = players.length > 0 && players.every((player) => player.name.trim().length > 0);
@@ -968,7 +1108,7 @@ function App() {
     setLocationPromptOpen(true);
   }
 
-  function startGame(order: Player[], nextLocationMode: LocationMode, nextMapSetup: MapSetup | null) {
+  function startGame(order: Player[], nextMapSetup: MapSetup | null) {
     const orderedPlayers = order.map((player) => ({
       ...player,
       name: player.name.trim(),
@@ -985,9 +1125,9 @@ function App() {
     setCurrentPlayerIndex(0);
     setCurrentTurn(createTurn(orderedPlayers[0].id, 1));
     setLeaderboardTab("overall");
-    setLocationMode(nextLocationMode === "on" && nextMapSetup ? "on" : "off");
     setMapSetup(nextMapSetup);
-    setSetupState(null);
+    setRealSetupState(null);
+    setDrawSetupState(null);
     setPickerState(null);
     setViewerState(null);
     setLocationPromptOpen(false);
@@ -1008,7 +1148,7 @@ function App() {
       const center = await requestCurrentLocation();
       setLocationPromptOpen(false);
       setLocationRequesting(false);
-      setSetupState({
+      setRealSetupState({
         center,
         currentLocation: center,
         selectedSwing: null,
@@ -1016,20 +1156,34 @@ function App() {
       });
     } catch {
       setLocationNotice("Location unavailable. Maps are off for this game.");
-      startGame(pendingStartPlayers, "off", null);
+      startGame(pendingStartPlayers, null);
     }
   }
 
   function startWithoutLocation() {
-    startGame(pendingStartPlayers, "off", null);
+    startGame(pendingStartPlayers, null);
   }
 
-  function saveMapSetup(nextMapSetup: MapSetup) {
-    startGame(pendingStartPlayers, "on", nextMapSetup);
+  function startDrawSetup() {
+    setLocationPromptOpen(false);
+    setDrawSetupState({
+      color: DRAW_COLORS[0],
+      size: DEFAULT_DRAW_SIZE,
+      strokes: [],
+      view: DEFAULT_DRAW_VIEW,
+    });
+  }
+
+  function saveMapSetup(nextMapSetup: RealMapSetup) {
+    startGame(pendingStartPlayers, nextMapSetup);
+  }
+
+  function saveDrawSetup(nextMapSetup: DrawnMapSetup) {
+    startGame(pendingStartPlayers, nextMapSetup);
   }
 
   function skipMapSetup() {
-    startGame(pendingStartPlayers, "off", null);
+    startGame(pendingStartPlayers, null);
   }
 
   function exitToHome() {
@@ -1041,9 +1195,9 @@ function App() {
     setCurrentPlayerIndex(0);
     setCurrentTurn(null);
     setLeaderboardTab("overall");
-    setLocationMode("off");
     setMapSetup(null);
-    setSetupState(null);
+    setRealSetupState(null);
+    setDrawSetupState(null);
     setPickerState(null);
     setViewerState(null);
     setLocationPromptOpen(false);
@@ -1094,6 +1248,10 @@ function App() {
       selected: null,
     });
 
+    if (mapSetup?.kind !== "real") {
+      return;
+    }
+
     try {
       const currentLocation = await requestCurrentLocation();
       setPickerState((state) => (state?.eventId === eventId ? { ...state, currentLocation } : state));
@@ -1126,7 +1284,7 @@ function App() {
     setNow(timestamp);
 
     // Location picking happens after the kick is recorded and never pauses the timer.
-    if (currentTurn?.status === "running" && currentPlayer && locationMode === "on" && mapSetup) {
+    if (currentTurn?.status === "running" && currentPlayer && mapSetup) {
       void openPickerForKick(eventId);
     }
   }
@@ -1190,7 +1348,10 @@ function App() {
       round: "all",
       currentLocation: null,
     });
-    void refreshViewerLocation("play");
+
+    if (mapSetup.kind === "real") {
+      void refreshViewerLocation("play");
+    }
   }
 
   function openResultsMap() {
@@ -1204,7 +1365,10 @@ function App() {
       round: "all",
       currentLocation: null,
     });
-    void refreshViewerLocation("results");
+
+    if (mapSetup.kind === "real") {
+      void refreshViewerLocation("results");
+    }
   }
 
   function undoLastEvent() {
@@ -1615,7 +1779,7 @@ function App() {
                 <X size={18} />
                 Exit
               </button>
-              <button className="primary" type="button" onClick={() => startGame(gamePlayers, locationMode, mapSetup)}>
+              <button className="primary" type="button" onClick={() => startGame(gamePlayers, mapSetup)}>
                 <RotateCcw size={18} />
                 Play Again
               </button>
@@ -1677,49 +1841,95 @@ function App() {
       {locationPromptOpen ? (
         <div className="modal-backdrop">
           <section className="choice-modal" role="dialog" aria-modal="true">
-            <strong>Use location for this game?</strong>
-            <p>Fair and Out kicks can be saved to a map.</p>
-            <div className="map-actions">
+            <strong>Choose Map</strong>
+            <p>Fair and Out kicks can be saved to a real or drawn course.</p>
+            <div className="choice-actions">
               <button className="secondary" type="button" onClick={startWithoutLocation} disabled={locationRequesting}>
-                Not Now
+                No Map
               </button>
               <button className="primary" type="button" onClick={startWithLocation} disabled={locationRequesting}>
                 {locationRequesting ? "Connecting" : "Use Location"}
+              </button>
+              <button className="secondary" type="button" onClick={startDrawSetup} disabled={locationRequesting}>
+                Draw Course
               </button>
             </div>
           </section>
         </div>
       ) : null}
 
-      {setupState ? (
+      {realSetupState ? (
         <MapModal
-          center={setupState.center}
-          currentLocation={setupState.currentLocation}
+          center={realSetupState.center}
+          currentLocation={realSetupState.currentLocation}
           mode="setup"
           onCancel={skipMapSetup}
           onSave={saveMapSetup}
-          onSelectSwing={(selectedSwing) => setSetupState((state) => (state ? { ...state, selectedSwing } : state))}
-          selectedSwing={setupState.selectedSwing}
-          zoom={setupState.zoom}
+          onSelectSwing={(selectedSwing) => setRealSetupState((state) => (state ? { ...state, selectedSwing } : state))}
+          selectedSwing={realSetupState.selectedSwing}
+          zoom={realSetupState.zoom}
         />
       ) : null}
 
-      {pickerState && mapSetup ? (
+      {drawSetupState ? (
+        <DrawMapModal
+          color={drawSetupState.color}
+          mode="setup"
+          onCancel={skipMapSetup}
+          onClear={() => setDrawSetupState((state) => (state ? { ...state, strokes: [] } : state))}
+          onColorChange={(color) => setDrawSetupState((state) => (state ? { ...state, color } : state))}
+          onSave={saveDrawSetup}
+          onSizeChange={(size) => setDrawSetupState((state) => (state ? { ...state, size } : state))}
+          onStrokesChange={(strokes) => setDrawSetupState((state) => (state ? { ...state, strokes } : state))}
+          onViewChange={(view) => setDrawSetupState((state) => (state ? { ...state, view } : state))}
+          size={drawSetupState.size}
+          strokes={drawSetupState.strokes}
+          view={drawSetupState.view}
+        />
+      ) : null}
+
+      {pickerState && mapSetup?.kind === "real" ? (
         <MapModal
           currentLocation={pickerState.currentLocation}
           mode="picker"
           onCancel={() => setPickerState(null)}
           onSave={savePickerLocation}
-          onSelect={(selected) => setPickerState((state) => (state ? { ...state, selected } : state))}
-          selected={pickerState.selected}
+          onSelect={(point) => setPickerState((state) => (state ? { ...state, selected: { kind: "real", point } } : state))}
+          selected={pickerState.selected?.kind === "real" ? pickerState.selected.point : null}
           setup={mapSetup}
         />
       ) : null}
 
-      {viewerState && mapSetup ? (
+      {pickerState && mapSetup?.kind === "drawn" ? (
+        <DrawMapModal
+          mode="picker"
+          onCancel={() => setPickerState(null)}
+          onSave={savePickerLocation}
+          onSelect={(point) => setPickerState((state) => (state ? { ...state, selected: { kind: "drawn", point } } : state))}
+          selected={pickerState.selected?.kind === "drawn" ? pickerState.selected.point : null}
+          setup={mapSetup}
+        />
+      ) : null}
+
+      {viewerState && mapSetup?.kind === "real" ? (
         <MapModal
           currentLocation={viewerState.currentLocation}
-          markers={visibleKickMarkers}
+          markers={visibleRealKickMarkers}
+          mode="viewer"
+          onClose={() => setViewerState(null)}
+          onPlayerChange={(playerId) => setViewerState((state) => (state ? { ...state, playerId } : state))}
+          onRoundChange={(round) => setViewerState((state) => (state ? { ...state, round } : state))}
+          players={gamePlayers}
+          rounds={settings.rounds}
+          selectedPlayerId={viewerState.playerId}
+          selectedRound={viewerState.round}
+          setup={mapSetup}
+        />
+      ) : null}
+
+      {viewerState && mapSetup?.kind === "drawn" ? (
+        <DrawMapModal
+          markers={visibleDrawKickMarkers}
           mode="viewer"
           onClose={() => setViewerState(null)}
           onPlayerChange={(playerId) => setViewerState((state) => (state ? { ...state, playerId } : state))}

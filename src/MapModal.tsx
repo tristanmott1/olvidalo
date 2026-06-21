@@ -8,8 +8,8 @@ import {
   createSwingIcon,
   type KickMarker,
   type LocationPoint,
-  type MapSetup,
   type MapView,
+  type RealMapSetup,
   toLeafletPoint,
 } from "./map";
 
@@ -24,7 +24,7 @@ type MapModalProps =
       currentLocation: LocationPoint;
       mode: "setup";
       onCancel: () => void;
-      onSave: (setup: MapSetup) => void;
+      onSave: (setup: RealMapSetup) => void;
       onSelectSwing: (point: LocationPoint) => void;
       selectedSwing: LocationPoint | null;
       zoom: number;
@@ -36,7 +36,7 @@ type MapModalProps =
       onSave: () => void;
       onSelect: (point: LocationPoint) => void;
       selected: LocationPoint | null;
-      setup: MapSetup;
+      setup: RealMapSetup;
     }
   | {
       currentLocation: LocationPoint | null;
@@ -49,7 +49,7 @@ type MapModalProps =
       rounds: number;
       selectedPlayerId: string | "all";
       selectedRound: number | "all";
-      setup: MapSetup;
+      setup: RealMapSetup;
     };
 
 function describeMarker(marker: KickMarker) {
@@ -226,6 +226,7 @@ function MapModal(props: MapModalProps) {
 
     // Save the user's current pan/zoom as the reusable game map orientation.
     props.onSave({
+      kind: "real",
       swing: props.selectedSwing,
       view: getMapView(mapRef.current),
     });
