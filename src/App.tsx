@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   useEffect,
   useMemo,
@@ -148,6 +149,8 @@ const ACTIVE_GAME_KEY = "olvidalo.activeGame.v1";
 const DEFAULT_OUT_LIMIT = 2;
 const OUT_LIMIT_OPTIONS = [1, 2, 3, 4, 5] as const;
 const ROUND_OPTIONS = [1, 2, 3, 4, 5] as const;
+const MAX_SETTING_SECONDS = 9999;
+const TIMER_WRAP_MS = 10000 * 60 * 1000;
 const DEFAULT_SETTINGS: GameSettings = {
   rounds: 1,
   scoringType: "longest",
@@ -187,9 +190,35 @@ function clampChoice(value: number, allowed: readonly number[], fallback: number
   return allowed.includes(value) ? value : fallback;
 }
 
+function clampSeconds(value: number) {
+  return Math.min(MAX_SETTING_SECONDS, Math.max(0, value));
+}
+
 function readSeconds(value: unknown, fallback: number) {
   const seconds = Math.floor(Number(value));
-  return Number.isFinite(seconds) && seconds >= 0 ? seconds : fallback;
+  return Number.isFinite(seconds) ? clampSeconds(seconds) : fallback;
+}
+
+function readSecondsDraft(value: string) {
+  const seconds = Math.floor(Number(value));
+  return Number.isFinite(seconds) ? clampSeconds(seconds) : 0;
+}
+
+function normalizeTimerMs(ms: number) {
+  if (!Number.isFinite(ms)) {
+    return 0;
+  }
+
+  if (ms >= TIMER_WRAP_MS) {
+    return ms % TIMER_WRAP_MS;
+  }
+
+  if (ms <= -TIMER_WRAP_MS) {
+    const remainder = Math.abs(ms) % TIMER_WRAP_MS;
+    return remainder === 0 ? 0 : -remainder;
+  }
+
+  return ms;
 }
 
 function readStoredPlayers(): Player[] {
@@ -381,11 +410,13 @@ function readTurnEvent(value: unknown): TurnEvent | null {
     kind?: unknown;
     location?: unknown;
   };
-  const elapsedMs = Number(event.elapsedMs);
+  const rawElapsedMs = Number(event.elapsedMs);
 
-  if (!Number.isFinite(elapsedMs)) {
+  if (!Number.isFinite(rawElapsedMs)) {
     return null;
   }
+
+  const elapsedMs = normalizeTimerMs(rawElapsedMs);
 
   if (event.kind === "fair" || event.kind === "out") {
     return {
@@ -464,7 +495,7 @@ function readTurnResult(value: unknown): TurnResult | null {
     playerId?: unknown;
     round?: unknown;
   };
-  const elapsedMs = Number(result.elapsedMs);
+  const rawElapsedMs = Number(result.elapsedMs);
   const fairHits = Number(result.fairHits);
   const outHits = Number(result.outHits);
   const round = Number(result.round);
@@ -475,7 +506,7 @@ function readTurnResult(value: unknown): TurnResult | null {
   if (
     typeof result.playerId !== "string" ||
     !Number.isFinite(round) ||
-    !Number.isFinite(elapsedMs) ||
+    !Number.isFinite(rawElapsedMs) ||
     !Number.isFinite(fairHits) ||
     !Number.isFinite(outHits)
   ) {
@@ -485,7 +516,7 @@ function readTurnResult(value: unknown): TurnResult | null {
   return {
     playerId: result.playerId,
     round,
-    elapsedMs,
+    elapsedMs: normalizeTimerMs(rawElapsedMs),
     fairHits,
     outHits,
     events,
@@ -595,7 +626,7 @@ function getTurnBaseElapsedMs(turn: TurnState, now: number) {
 }
 
 function getTurnElapsedMs(turn: TurnState, now: number) {
-  return getTurnBaseElapsedMs(turn, now) + getAdjustmentMs(turn.events);
+  return normalizeTimerMs(getTurnBaseElapsedMs(turn, now) + getAdjustmentMs(turn.events));
 }
 
 function createTurn(playerId: string, round: number): TurnState {
@@ -870,6 +901,8 @@ function App() {
   const [settings, setSettings] = useState<GameSettings>(savedGame?.settings ?? readStoredSettings);
   const [draftName, setDraftName] = useState("");
   const [draftOutLimit, setDraftOutLimit] = useState(DEFAULT_OUT_LIMIT);
+  const [bonusSecondsDraft, setBonusSecondsDraft] = useState(String(settings.bonusSeconds));
+  const [penaltySecondsDraft, setPenaltySecondsDraft] = useState(String(settings.penaltySeconds));
   const [gamePlayers, setGamePlayers] = useState<Player[]>(savedGame?.players ?? []);
   const [currentRound, setCurrentRound] = useState(savedGame?.currentRound ?? 1);
   const [currentPlayerIndex, setCurrentPlayerIndex] = useState(savedGame?.currentPlayerIndex ?? 0);
@@ -1045,6 +1078,40 @@ function App() {
       ...currentSettings,
       ...updates,
     }));
+  }
+
+  function commitBonusSeconds() {
+    const bonusSeconds = readSecondsDraft(bonusSecondsDraft);
+    setBonusSecondsDraft(String(bonusSeconds));
+    updateSettings({ bonusSeconds });
+    return bonusSeconds;
+  }
+
+  function commitPenaltySeconds() {
+    const penaltySeconds = readSecondsDraft(penaltySecondsDraft);
+    setPenaltySecondsDraft(String(penaltySeconds));
+    updateSettings({ penaltySeconds });
+    return penaltySeconds;
+  }
+
+  function commitTimeSettings() {
+    const bonusSeconds = readSecondsDraft(bonusSecondsDraft);
+    const penaltySeconds = readSecondsDraft(penaltySecondsDraft);
+
+    setBonusSecondsDraft(String(bonusSeconds));
+    setPenaltySecondsDraft(String(penaltySeconds));
+    setSettings((currentSettings) => ({
+      ...currentSettings,
+      bonusSeconds,
+      penaltySeconds,
+    }));
+  }
+
+  function commitSecondsOnEnter(event: ReactKeyboardEvent<HTMLInputElement>, commitSeconds: () => number) {
+    if (event.key === "Enter") {
+      event.currentTarget.blur();
+      commitSeconds();
+    }
   }
 
   function addPlayer(event: FormEvent<HTMLFormElement>) {
@@ -1270,7 +1337,7 @@ function App() {
       }
 
       const baseElapsedMs = getTurnBaseElapsedMs(turn, timestamp);
-      const elapsedMs = baseElapsedMs + getAdjustmentMs(turn.events);
+      const elapsedMs = getTurnElapsedMs(turn, timestamp);
       const events = [...turn.events, { id: eventId, kind, elapsedMs, location: null }];
       const outs = countHits(events).out;
 
@@ -1298,8 +1365,12 @@ function App() {
         return turn;
       }
 
-      const elapsedMs = getTurnBaseElapsedMs(turn, timestamp) + getAdjustmentMs(turn.events) + deltaMs;
-      return { ...turn, events: [...turn.events, { id: createId(), kind, elapsedMs, deltaMs }] };
+      const currentElapsedMs = getTurnElapsedMs(turn, timestamp);
+      const elapsedMs = normalizeTimerMs(currentElapsedMs + deltaMs);
+      // Store the effective delta so wrapped timers stay consistent after undo and reload.
+      const normalizedDeltaMs = elapsedMs - currentElapsedMs;
+
+      return { ...turn, events: [...turn.events, { id: createId(), kind, elapsedMs, deltaMs: normalizedDeltaMs }] };
     });
     setNow(timestamp);
   }
@@ -1637,21 +1708,23 @@ function App() {
                 <label className="field">
                   <span>Bonus seconds</span>
                   <input
-                    min="0"
-                    step="1"
-                    type="number"
-                    value={settings.bonusSeconds}
-                    onChange={(event) => updateSettings({ bonusSeconds: readSeconds(event.target.value, 0) })}
+                    inputMode="numeric"
+                    type="text"
+                    value={bonusSecondsDraft}
+                    onBlur={commitBonusSeconds}
+                    onChange={(event) => setBonusSecondsDraft(event.target.value)}
+                    onKeyDown={(event) => commitSecondsOnEnter(event, commitBonusSeconds)}
                   />
                 </label>
                 <label className="field">
                   <span>Penalty seconds</span>
                   <input
-                    min="0"
-                    step="1"
-                    type="number"
-                    value={settings.penaltySeconds}
-                    onChange={(event) => updateSettings({ penaltySeconds: readSeconds(event.target.value, 0) })}
+                    inputMode="numeric"
+                    type="text"
+                    value={penaltySecondsDraft}
+                    onBlur={commitPenaltySeconds}
+                    onChange={(event) => setPenaltySecondsDraft(event.target.value)}
+                    onKeyDown={(event) => commitSecondsOnEnter(event, commitPenaltySeconds)}
                   />
                 </label>
               </div>
@@ -1660,7 +1733,10 @@ function App() {
             <button
               className="primary wide-button"
               type="button"
-              onClick={() => prepareStartGame(players)}
+              onClick={() => {
+                commitTimeSettings();
+                prepareStartGame(players);
+              }}
               disabled={!canStart}
             >
               Start
