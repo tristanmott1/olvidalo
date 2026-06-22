@@ -22,6 +22,8 @@
   --ochre: #c69a3d;
   --leather: #8a5a35;
   --clay: #9b4f35;
+  --out: #b94735;
+  --penalty: #6f5236;
   --water: #477e9b;
   --shadow: 0 10px 26px rgba(31, 33, 26, 0.08);
 }
@@ -384,7 +386,7 @@ button:focus-visible {
 }
 
 .out-hit {
-  background: var(--leather);
+  background: var(--out);
 }
 
 .bonus-hit {
@@ -393,7 +395,7 @@ button:focus-visible {
 }
 
 .penalty-hit {
-  background: var(--clay);
+  background: var(--penalty);
 }
 
 .control-button {
@@ -602,7 +604,7 @@ button:focus-visible {
 }
 
 .out-marker span {
-  background: var(--leather);
+  background: var(--out);
 }
 
 .swing-marker span {

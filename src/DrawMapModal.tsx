@@ -16,7 +16,7 @@ import {
 import type { DrawKickMarker, DrawPoint, DrawStroke, DrawView, DrawnMapSetup } from "./map";
 
 const DRAW_FAIR_COLOR = "#3f6f45";
-const DRAW_OUT_COLOR = "#8a5a35";
+const DRAW_OUT_COLOR = "#b94735";
 const DRAW_SWING_COLOR = "#183f34";
 const DRAW_MARKER_STROKE = "#fff9ec";
 
