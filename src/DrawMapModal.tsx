@@ -234,10 +234,10 @@ function DrawMapModal(props: DrawMapModalProps) {
 
     // Keep drawing responsive even when pointer events arrive faster than React renders.
     const nextStrokes = strokesRef.current.map((stroke) =>
-        stroke.id === drawingStrokeIdRef.current
-          ? { ...stroke, points: [...stroke.points, point] }
-          : stroke,
-      );
+      stroke.id === drawingStrokeIdRef.current
+        ? { ...stroke, points: [...stroke.points, point] }
+        : stroke,
+    );
 
     strokesRef.current = nextStrokes;
     props.onStrokesChange(nextStrokes);
@@ -420,7 +420,12 @@ function DrawMapModal(props: DrawMapModalProps) {
 
   return (
     <div className="modal-backdrop">
-      <section className="map-modal draw-map-modal" role="dialog" aria-modal="true">
+      <section
+        className="map-modal draw-map-modal"
+        role="dialog"
+        aria-modal="true"
+        onPointerDown={(event) => event.stopPropagation()}
+      >
         <div className="map-modal-top">
           <strong>{getTitle(props.mode)}</strong>
           <button

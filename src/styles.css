@@ -532,6 +532,7 @@ button:focus-visible {
   place-items: center;
   padding: 14px;
   background: rgba(10, 30, 26, 0.54);
+  pointer-events: auto;
 }
 
 .choice-modal,
@@ -541,6 +542,7 @@ button:focus-visible {
   border-radius: 8px;
   background: var(--surface);
   box-shadow: 0 24px 70px rgba(10, 30, 26, 0.28);
+  pointer-events: auto;
 }
 
 .choice-modal {
@@ -695,10 +697,12 @@ button:focus-visible {
 .draw-surface {
   display: block;
   width: 100%;
+  height: min(58vh, 460px);
   min-height: 420px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #ffffff;
+  pointer-events: auto;
   touch-action: none;
 }
 
@@ -871,6 +875,7 @@ button:focus-visible {
   }
 
   .draw-surface {
+    height: 44vh;
     min-height: 360px;
   }
 
