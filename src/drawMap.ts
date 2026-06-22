@@ -5,7 +5,21 @@ export const DEFAULT_DRAW_VIEW: DrawView = {
   center: DRAW_SWING,
   zoom: 1.8,
 };
-export const DRAW_COLORS = ["#111111", "#258f5d", "#c64235", "#f2bd3d", "#1f7fe5", "#ffffff"] as const;
+export const DRAW_COLORS = [
+  "#111111",
+  "#1f5f3a",
+  "#258f5d",
+  "#74a85c",
+  "#a6c96a",
+  "#4a2f1c",
+  "#7a4b2a",
+  "#a87444",
+  "#c49a62",
+  "#c64235",
+  "#f2bd3d",
+  "#1f7fe5",
+  "#ffffff",
+] as const;
 export const ERASER_COLOR = "#ffffff";
 export const DEFAULT_DRAW_SIZE = 8;
 export const MIN_DRAW_ZOOM = 0.12;
