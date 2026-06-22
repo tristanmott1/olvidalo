@@ -116,17 +116,22 @@ type DrawSetupState = {
   view: DrawView;
 };
 
+type MapFilterState = {
+  playerId: string | "all";
+  round: number | "all";
+};
+
 type PickerState = {
   eventId: string;
   kind: HitKind;
+  playerId: string | "all";
+  round: number | "all";
   currentLocation: LocationPoint | null;
   selected: KickLocation | null;
 };
 
-type ViewerState = {
+type ViewerState = MapFilterState & {
   source: "play" | "results";
-  playerId: string | "all";
-  round: number | "all";
   currentLocation: LocationPoint | null;
 };
 
@@ -885,10 +890,10 @@ function buildDrawKickMarkers(results: TurnResult[], currentTurn: TurnState | nu
   });
 }
 
-function filterKickMarkers<T extends { playerId: string; round: number }>(markers: T[], viewer: ViewerState) {
+function filterKickMarkers<T extends { playerId: string; round: number }>(markers: T[], filter: MapFilterState) {
   return markers.filter((marker) => {
-    const playerMatches = viewer.playerId === "all" || marker.playerId === viewer.playerId;
-    const roundMatches = viewer.round === "all" || marker.round === viewer.round;
+    const playerMatches = filter.playerId === "all" || marker.playerId === filter.playerId;
+    const roundMatches = filter.round === "all" || marker.round === filter.round;
 
     return playerMatches && roundMatches;
   });
@@ -1069,6 +1074,14 @@ function App() {
   const visibleDrawKickMarkers = useMemo(
     () => (viewerState ? filterKickMarkers(drawKickMarkers, viewerState) : []),
     [drawKickMarkers, viewerState],
+  );
+  const pickerRealKickMarkers = useMemo(
+    () => (pickerState ? filterKickMarkers(realKickMarkers, pickerState) : []),
+    [realKickMarkers, pickerState],
+  );
+  const pickerDrawKickMarkers = useMemo(
+    () => (pickerState ? filterKickMarkers(drawKickMarkers, pickerState) : []),
+    [drawKickMarkers, pickerState],
   );
   const onDeckPlayers = getOnDeckPlayers(gamePlayers, currentRound, currentPlayerIndex, settings.rounds);
   const canStart = players.length > 0 && players.every((player) => player.name.trim().length > 0);
@@ -1313,6 +1326,8 @@ function App() {
     setPickerState({
       eventId,
       kind,
+      playerId: currentPlayer?.id ?? "all",
+      round: currentRound,
       currentLocation: null,
       selected: null,
     });
@@ -1969,24 +1984,38 @@ function App() {
       {pickerState && mapSetup?.kind === "real" ? (
         <MapModal
           currentLocation={pickerState.currentLocation}
+          markers={pickerRealKickMarkers}
           mode="picker"
           onCancel={() => setPickerState(null)}
+          onPlayerChange={(playerId) => setPickerState((state) => (state ? { ...state, playerId } : state))}
+          onRoundChange={(round) => setPickerState((state) => (state ? { ...state, round } : state))}
           onSave={savePickerLocation}
           onSelect={(point) => setPickerState((state) => (state ? { ...state, selected: { kind: "real", point } } : state))}
+          players={gamePlayers}
+          rounds={settings.rounds}
           selected={pickerState.selected?.kind === "real" ? pickerState.selected.point : null}
           selectedKind={pickerState.kind}
+          selectedPlayerId={pickerState.playerId}
+          selectedRound={pickerState.round}
           setup={mapSetup}
         />
       ) : null}
 
       {pickerState && mapSetup?.kind === "drawn" ? (
         <DrawMapModal
+          markers={pickerDrawKickMarkers}
           mode="picker"
           onCancel={() => setPickerState(null)}
+          onPlayerChange={(playerId) => setPickerState((state) => (state ? { ...state, playerId } : state))}
+          onRoundChange={(round) => setPickerState((state) => (state ? { ...state, round } : state))}
           onSave={savePickerLocation}
           onSelect={(point) => setPickerState((state) => (state ? { ...state, selected: { kind: "drawn", point } } : state))}
+          players={gamePlayers}
+          rounds={settings.rounds}
           selected={pickerState.selected?.kind === "drawn" ? pickerState.selected.point : null}
           selectedKind={pickerState.kind}
+          selectedPlayerId={pickerState.playerId}
+          selectedRound={pickerState.round}
           setup={mapSetup}
         />
       ) : null}

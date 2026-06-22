@@ -599,6 +599,12 @@ button:focus-visible {
   border-radius: 999px;
 }
 
+.pending-marker span {
+  width: 26px;
+  height: 26px;
+  box-shadow: 0 0 0 4px rgba(255, 254, 250, 0.5);
+}
+
 .fair-marker span {
   background: var(--moss);
 }

@@ -30,12 +30,19 @@ type MapModalProps =
     }
   | {
       currentLocation: LocationPoint | null;
+      markers: KickMarker[];
       mode: "picker";
       onCancel: () => void;
+      onPlayerChange: (playerId: string | "all") => void;
+      onRoundChange: (round: number | "all") => void;
       onSave: () => void;
       onSelect: (point: LocationPoint) => void;
+      players: PlayerOption[];
       selected: LocationPoint | null;
       selectedKind: KickMarker["kind"];
+      selectedPlayerId: string | "all";
+      selectedRound: number | "all";
+      rounds: number;
       setup: RealMapSetup;
     }
   | {
@@ -203,20 +210,21 @@ function MapModal(props: MapModalProps) {
       L.marker(toLeafletPoint(props.currentLocation), { icon: createCurrentLocationIcon() }).addTo(markerLayer);
     }
 
-    if (props.mode === "picker") {
-      if (props.selected) {
-        L.marker(toLeafletPoint(props.selected), { icon: createKickIcon(props.selectedKind) }).addTo(markerLayer);
-      }
-
-      return;
-    }
-
     // Rebuild markers from React state so filtering has one source of truth.
     props.markers.forEach((marker) => {
       L.marker(toLeafletPoint(marker.location), { icon: createKickIcon(marker.kind) })
         .bindPopup(`${describeMarker(marker)}<br>${formatElapsed(marker.elapsedMs)}`)
         .addTo(markerLayer);
     });
+
+    if (props.mode === "picker") {
+      if (props.selected) {
+        // Draw the pending marker last so filters never hide the kick being placed.
+        L.marker(toLeafletPoint(props.selected), { icon: createKickIcon(props.selectedKind, true) }).addTo(markerLayer);
+      }
+
+      return;
+    }
   }, [props]);
 
   function saveSetup() {
@@ -247,7 +255,7 @@ function MapModal(props: MapModalProps) {
           </button>
         </div>
 
-        {props.mode === "viewer" ? (
+        {props.mode !== "setup" ? (
           <div className="map-filters">
             <label className="field">
               <span>Player</span>
@@ -282,7 +290,7 @@ function MapModal(props: MapModalProps) {
 
         <div className="map-surface" ref={mapElementRef} />
 
-        {props.mode === "viewer" && props.markers.length === 0 ? (
+        {props.mode !== "setup" && props.markers.length === 0 ? (
           <p className="map-empty">No saved kick locations.</p>
         ) : null}
 

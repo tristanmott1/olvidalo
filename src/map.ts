@@ -77,12 +77,12 @@ export function toLeafletPoint(point: LocationPoint): L.LatLngExpression {
   return [point.lat, point.lng];
 }
 
-export function createKickIcon(kind: KickMarker["kind"]) {
+export function createKickIcon(kind: KickMarker["kind"], pending = false) {
   return L.divIcon({
-    className: `kick-marker ${kind}-marker`,
+    className: `kick-marker ${kind}-marker${pending ? " pending-marker" : ""}`,
     html: `<span>${kind === "fair" ? "H" : "O"}</span>`,
-    iconSize: [24, 24],
-    iconAnchor: [12, 12],
+    iconSize: pending ? [30, 30] : [24, 24],
+    iconAnchor: pending ? [15, 15] : [12, 12],
   });
 }
 

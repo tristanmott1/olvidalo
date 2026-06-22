@@ -41,12 +41,19 @@ type DrawMapModalProps =
       view: DrawView;
     }
   | {
+      markers: DrawKickMarker[];
       mode: "picker";
       onCancel: () => void;
+      onPlayerChange: (playerId: string | "all") => void;
+      onRoundChange: (round: number | "all") => void;
       onSave: () => void;
       onSelect: (point: DrawPoint) => void;
+      players: PlayerOption[];
+      rounds: number;
       selected: DrawPoint | null;
       selectedKind: DrawKickMarker["kind"];
+      selectedPlayerId: string | "all";
+      selectedRound: number | "all";
       setup: DrawnMapSetup;
     }
   | {
@@ -142,7 +149,7 @@ function DrawMapModal(props: DrawMapModalProps) {
   const [localView, setLocalView] = useState(props.mode === "setup" ? props.view : props.setup.view);
   const strokes = props.mode === "setup" ? props.strokes : props.setup.strokes;
   const selected = props.mode === "picker" ? props.selected : null;
-  const markers = props.mode === "viewer" ? props.markers : [];
+  const markers = props.mode !== "setup" ? props.markers : [];
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -208,17 +215,6 @@ function DrawMapModal(props: DrawMapModalProps) {
     const swingPoint = worldToScreen(DRAW_SWING, localView, width, height);
     drawCircle(ctx, swingPoint, 12, DRAW_SWING_COLOR, "S");
 
-    if (props.mode === "picker" && selected) {
-      const color = props.selectedKind === "fair" ? DRAW_FAIR_COLOR : DRAW_OUT_COLOR;
-      drawCircle(
-        ctx,
-        worldToScreen(selected, localView, width, height),
-        9,
-        color,
-        props.selectedKind === "fair" ? "H" : "O",
-      );
-    }
-
     markers.forEach((marker) => {
       const color = marker.kind === "fair" ? DRAW_FAIR_COLOR : DRAW_OUT_COLOR;
       drawCircle(
@@ -229,6 +225,18 @@ function DrawMapModal(props: DrawMapModalProps) {
         marker.kind === "fair" ? "H" : "O",
       );
     });
+
+    if (props.mode === "picker" && selected) {
+      const color = props.selectedKind === "fair" ? DRAW_FAIR_COLOR : DRAW_OUT_COLOR;
+      // Draw the pending marker last so filters never hide the kick being placed.
+      drawCircle(
+        ctx,
+        worldToScreen(selected, localView, width, height),
+        12,
+        color,
+        props.selectedKind === "fair" ? "H" : "O",
+      );
+    }
   }, [canvasSize, localView, markers, selected, strokes]);
 
   function updateView(view: DrawView) {
@@ -472,7 +480,7 @@ function DrawMapModal(props: DrawMapModalProps) {
           </div>
         ) : null}
 
-        {props.mode === "viewer" ? (
+        {props.mode !== "setup" ? (
           <div className="map-filters">
             <label className="field">
               <span>Player</span>
@@ -515,7 +523,7 @@ function DrawMapModal(props: DrawMapModalProps) {
           ref={canvasRef}
         />
 
-        {props.mode === "viewer" && props.markers.length === 0 ? (
+        {props.mode !== "setup" && props.markers.length === 0 ? (
           <p className="map-empty">No saved kick locations.</p>
         ) : null}
 
