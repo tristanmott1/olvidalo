@@ -1,4 +1,4 @@
-const CACHE_NAME = "olvidalo-v12";
+const CACHE_NAME = "olvidalo-v13";
 const CORE_ASSETS = [
   "./",
   "./index.html",
@@ -8,7 +8,12 @@ const CORE_ASSETS = [
   "./icon-180.png",
   "./icon-192.png",
   "./icon-512.png",
+/* __VITE_ASSETS__ */
 ];
+
+function isNavigationRequest(request) {
+  return request.mode === "navigate" || request.headers.get("accept")?.includes("text/html");
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -38,15 +43,27 @@ self.addEventListener("fetch", (event) => {
   }
 
   event.respondWith(
-    fetch(request)
-      .then((response) => {
-        if (response.ok) {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-        }
+    caches.match(request).then((cached) => {
+      if (cached) {
+        return cached;
+      }
 
-        return response;
-      })
-      .catch(() => caches.match(request).then((cached) => cached || caches.match("./index.html"))),
+      return fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          }
+
+          return response;
+        })
+        .catch(() => {
+          if (isNavigationRequest(request)) {
+            return caches.match("./index.html");
+          }
+
+          return Response.error();
+        });
+    }),
   );
 });
