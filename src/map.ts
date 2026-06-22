@@ -80,16 +80,7 @@ export function toLeafletPoint(point: LocationPoint): L.LatLngExpression {
 export function createKickIcon(kind: KickMarker["kind"]) {
   return L.divIcon({
     className: `kick-marker ${kind}-marker`,
-    html: `<span>${kind === "fair" ? "F" : "O"}</span>`,
-    iconSize: [24, 24],
-    iconAnchor: [12, 12],
-  });
-}
-
-export function createSelectedIcon() {
-  return L.divIcon({
-    className: "kick-marker selected-marker",
-    html: "<span></span>",
+    html: `<span>${kind === "fair" ? "H" : "O"}</span>`,
     iconSize: [24, 24],
     iconAnchor: [12, 12],
   });

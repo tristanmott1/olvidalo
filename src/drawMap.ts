@@ -7,17 +7,17 @@ export const DEFAULT_DRAW_VIEW: DrawView = {
 };
 export const DRAW_COLORS = [
   "#111111",
-  "#1f5f3a",
-  "#258f5d",
-  "#74a85c",
-  "#a6c96a",
+  "#183f34",
+  "#3f6f45",
+  "#75874a",
+  "#9aaa63",
   "#4a2f1c",
-  "#7a4b2a",
+  "#8a5a35",
   "#a87444",
   "#c49a62",
-  "#c64235",
-  "#f2bd3d",
-  "#1f7fe5",
+  "#9b4f35",
+  "#c69a3d",
+  "#477e9b",
   "#ffffff",
 ] as const;
 export const ERASER_COLOR = "#ffffff";

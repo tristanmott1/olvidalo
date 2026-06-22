@@ -4,7 +4,6 @@ import { useEffect, useRef } from "react";
 import {
   createCurrentLocationIcon,
   createKickIcon,
-  createSelectedIcon,
   createSwingIcon,
   type KickMarker,
   type LocationPoint,
@@ -36,6 +35,7 @@ type MapModalProps =
       onSave: () => void;
       onSelect: (point: LocationPoint) => void;
       selected: LocationPoint | null;
+      selectedKind: KickMarker["kind"];
       setup: RealMapSetup;
     }
   | {
@@ -53,7 +53,7 @@ type MapModalProps =
     };
 
 function describeMarker(marker: KickMarker) {
-  const label = marker.kind === "fair" ? "Fair" : "Out";
+  const label = marker.kind === "fair" ? "Hit" : "Out";
   return `${label} - ${marker.playerName} - Round ${marker.round}`;
 }
 
@@ -205,7 +205,7 @@ function MapModal(props: MapModalProps) {
 
     if (props.mode === "picker") {
       if (props.selected) {
-        L.marker(toLeafletPoint(props.selected), { icon: createSelectedIcon() }).addTo(markerLayer);
+        L.marker(toLeafletPoint(props.selected), { icon: createKickIcon(props.selectedKind) }).addTo(markerLayer);
       }
 
       return;

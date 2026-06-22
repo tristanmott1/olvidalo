@@ -118,6 +118,7 @@ type DrawSetupState = {
 
 type PickerState = {
   eventId: string;
+  kind: HitKind;
   currentLocation: LocationPoint | null;
   selected: KickLocation | null;
 };
@@ -839,7 +840,7 @@ function buildRealKickMarkers(results: TurnResult[], currentTurn: TurnState | nu
   return turns.flatMap((turn) => {
     const markers: KickMarker[] = [];
 
-    // Only real located Fair and Out events become Leaflet markers.
+    // Only real located Hit and Out events become Leaflet markers.
     turn.events.forEach((event) => {
       if ((event.kind === "fair" || event.kind === "out") && event.location?.kind === "real") {
         markers.push({
@@ -865,7 +866,7 @@ function buildDrawKickMarkers(results: TurnResult[], currentTurn: TurnState | nu
   return turns.flatMap((turn) => {
     const markers: DrawKickMarker[] = [];
 
-    // Only drawn located Fair and Out events become canvas markers.
+    // Only drawn located Hit and Out events become canvas markers.
     turn.events.forEach((event) => {
       if ((event.kind === "fair" || event.kind === "out") && event.location?.kind === "drawn") {
         markers.push({
@@ -1308,9 +1309,10 @@ function App() {
     setNow(Date.now());
   }
 
-  async function openPickerForKick(eventId: string) {
+  async function openPickerForKick(eventId: string, kind: HitKind) {
     setPickerState({
       eventId,
+      kind,
       currentLocation: null,
       selected: null,
     });
@@ -1332,7 +1334,7 @@ function App() {
     const eventId = createId();
 
     setCurrentTurn((turn) => {
-      if (!turn || turn.status !== "running" || !currentPlayer) {
+      if (!turn || turn.status === "done" || !currentPlayer) {
         return turn;
       }
 
@@ -1351,8 +1353,8 @@ function App() {
     setNow(timestamp);
 
     // Location picking happens after the kick is recorded and never pauses the timer.
-    if (currentTurn?.status === "running" && currentPlayer && mapSetup) {
-      void openPickerForKick(eventId);
+    if (currentTurn?.status !== "done" && currentPlayer && mapSetup) {
+      void openPickerForKick(eventId, kind);
     }
   }
 
@@ -1787,15 +1789,15 @@ function App() {
                 className="hit-button fair-hit"
                 type="button"
                 onClick={() => recordHit("fair")}
-                disabled={currentTurn.status !== "running"}
+                disabled={currentTurn.status === "done"}
               >
-                Fair {currentCounts.fair}
+                Hit {currentCounts.fair}
               </button>
               <button
                 className="hit-button out-hit"
                 type="button"
                 onClick={() => recordHit("out")}
-                disabled={currentTurn.status !== "running"}
+                disabled={currentTurn.status === "done"}
               >
                 Out {currentCounts.out}/{currentPlayer.outLimit}
               </button>
@@ -1918,7 +1920,7 @@ function App() {
         <div className="modal-backdrop">
           <section className="choice-modal" role="dialog" aria-modal="true">
             <strong>Choose Map</strong>
-            <p>Fair and Out kicks can be saved to a real or drawn course.</p>
+            <p>Hit and Out kicks can be saved to a real or drawn course.</p>
             <div className="choice-actions">
               <button className="secondary" type="button" onClick={startWithoutLocation} disabled={locationRequesting}>
                 No Map
@@ -1972,6 +1974,7 @@ function App() {
           onSave={savePickerLocation}
           onSelect={(point) => setPickerState((state) => (state ? { ...state, selected: { kind: "real", point } } : state))}
           selected={pickerState.selected?.kind === "real" ? pickerState.selected.point : null}
+          selectedKind={pickerState.kind}
           setup={mapSetup}
         />
       ) : null}
@@ -1983,6 +1986,7 @@ function App() {
           onSave={savePickerLocation}
           onSelect={(point) => setPickerState((state) => (state ? { ...state, selected: { kind: "drawn", point } } : state))}
           selected={pickerState.selected?.kind === "drawn" ? pickerState.selected.point : null}
+          selectedKind={pickerState.kind}
           setup={mapSetup}
         />
       ) : null}

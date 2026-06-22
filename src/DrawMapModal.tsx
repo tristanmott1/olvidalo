@@ -15,6 +15,11 @@ import {
 } from "./drawMap";
 import type { DrawKickMarker, DrawPoint, DrawStroke, DrawView, DrawnMapSetup } from "./map";
 
+const DRAW_FAIR_COLOR = "#3f6f45";
+const DRAW_OUT_COLOR = "#8a5a35";
+const DRAW_SWING_COLOR = "#183f34";
+const DRAW_MARKER_STROKE = "#fff9ec";
+
 type PlayerOption = {
   id: string;
   name: string;
@@ -41,6 +46,7 @@ type DrawMapModalProps =
       onSave: () => void;
       onSelect: (point: DrawPoint) => void;
       selected: DrawPoint | null;
+      selectedKind: DrawKickMarker["kind"];
       setup: DrawnMapSetup;
     }
   | {
@@ -82,11 +88,11 @@ function drawCircle(ctx: CanvasRenderingContext2D, point: DrawPoint, radius: num
   ctx.fillStyle = fill;
   ctx.fill();
   ctx.lineWidth = 2;
-  ctx.strokeStyle = "#fffdf7";
+  ctx.strokeStyle = DRAW_MARKER_STROKE;
   ctx.stroke();
 
   if (label) {
-    ctx.fillStyle = "#ffffff";
+    ctx.fillStyle = DRAW_MARKER_STROKE;
     ctx.font = "800 10px Inter, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -200,15 +206,28 @@ function DrawMapModal(props: DrawMapModalProps) {
     strokes.forEach((stroke) => drawStroke(ctx, stroke, localView, width, height));
 
     const swingPoint = worldToScreen(DRAW_SWING, localView, width, height);
-    drawCircle(ctx, swingPoint, 12, "#123f38", "S");
+    drawCircle(ctx, swingPoint, 12, DRAW_SWING_COLOR, "S");
 
-    if (selected) {
-      drawCircle(ctx, worldToScreen(selected, localView, width, height), 9, "#f2bd3d");
+    if (props.mode === "picker" && selected) {
+      const color = props.selectedKind === "fair" ? DRAW_FAIR_COLOR : DRAW_OUT_COLOR;
+      drawCircle(
+        ctx,
+        worldToScreen(selected, localView, width, height),
+        9,
+        color,
+        props.selectedKind === "fair" ? "H" : "O",
+      );
     }
 
     markers.forEach((marker) => {
-      const color = marker.kind === "fair" ? "#258f5d" : "#c64235";
-      drawCircle(ctx, worldToScreen(marker.point, localView, width, height), 9, color, marker.kind === "fair" ? "F" : "O");
+      const color = marker.kind === "fair" ? DRAW_FAIR_COLOR : DRAW_OUT_COLOR;
+      drawCircle(
+        ctx,
+        worldToScreen(marker.point, localView, width, height),
+        9,
+        color,
+        marker.kind === "fair" ? "H" : "O",
+      );
     });
   }, [canvasSize, localView, markers, selected, strokes]);
 
@@ -503,14 +522,23 @@ function DrawMapModal(props: DrawMapModalProps) {
         {props.mode === "setup" ? (
           <label className="draw-size field">
             <span>Size</span>
-            <input
-              max="28"
-              min="2"
-              onChange={(event) => props.onSizeChange(Number(event.target.value))}
-              step="1"
-              type="range"
-              value={props.size}
-            />
+            <div className="draw-size-control">
+              <input
+                max="44"
+                min="2"
+                onChange={(event) => props.onSizeChange(Number(event.target.value))}
+                step="1"
+                type="range"
+                value={props.size}
+              />
+              <i
+                className="brush-preview"
+                style={{
+                  height: `${props.size}px`,
+                  width: `${props.size}px`,
+                }}
+              />
+            </div>
           </label>
         ) : null}
 
