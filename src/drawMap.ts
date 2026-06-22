@@ -3,12 +3,12 @@ import type { DrawPoint, DrawView } from "./map";
 export const DRAW_SWING: DrawPoint = { x: 0, y: 0 };
 export const DEFAULT_DRAW_VIEW: DrawView = {
   center: DRAW_SWING,
-  zoom: 1,
+  zoom: 1.8,
 };
 export const DRAW_COLORS = ["#111111", "#258f5d", "#c64235", "#f2bd3d", "#1f7fe5", "#ffffff"] as const;
 export const ERASER_COLOR = "#ffffff";
 export const DEFAULT_DRAW_SIZE = 8;
-export const MIN_DRAW_ZOOM = 0.35;
+export const MIN_DRAW_ZOOM = 0.12;
 export const MAX_DRAW_ZOOM = 4;
 
 export function clampDrawZoom(zoom: number) {
