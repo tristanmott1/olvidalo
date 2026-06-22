@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
   <title id="title">Olvídalo app icon</title>
   <desc id="desc">A minimal swingset, swing, ball, and ball arc for Olvídalo.</desc>
-  <rect width="512" height="512" rx="108" fill="#183f34"/>
+  <rect width="512" height="512" fill="#183f34"/>
   <path d="M139 386 206 118h101l66 268" fill="none" stroke="#fbf4e3" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
   <path d="M232 126v150M284 126v150" fill="none" stroke="#fbf4e3" stroke-width="10" stroke-linecap="round"/>
   <rect x="213" y="272" width="90" height="18" rx="9" fill="#fbf4e3"/>
